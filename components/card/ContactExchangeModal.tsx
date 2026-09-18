@@ -13,6 +13,7 @@ import { UserCheck, X, Send, Download, CheckCircle2, MessageCircle, Building2, P
 import { FullCard } from '@/lib/types';
 import { saveLead, recordAnalyticsEvent } from '@/lib/data/card-store';
 import { downloadVCard } from '@/lib/vcard-generator';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 
 interface ContactExchangeModalProps {
   isOpen: boolean;
@@ -34,11 +35,11 @@ export const ContactExchangeModal: React.FC<ContactExchangeModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !phone.trim()) return;
 
-    // 1. Guardar lead en el CRM
+    // 1. Guardar lead en el almacén local
     const newLead = {
       id: 'lead_' + Date.now() + '_' + Math.random().toString(36).substring(7),
       card_id: card.id,
@@ -57,7 +58,24 @@ export const ContactExchangeModal: React.FC<ContactExchangeModalProps> = ({
     saveLead(newLead);
     recordAnalyticsEvent(card.id, 'whatsapp_lead', { visitor_name: name });
 
-    // 2. Descargar vCard (.vcf) del asesor automáticamente
+    // 2. Sincronizar en la nube (Supabase whatsapp_leads)
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('whatsapp_leads').insert({
+          card_id: card.id,
+          visitor_name: name.trim(),
+          phone_number: phone.trim(),
+          email: email.trim() || null,
+          company_name: company.trim() || null,
+          subject: notes.trim() || 'Contacto capturado desde tarjeta NFC',
+          status: 'nuevo',
+        });
+      } catch (err) {
+        console.warn('Error guardando lead en Supabase:', err);
+      }
+    }
+
+    // 3. Descargar vCard (.vcf) del asesor automáticamente
     try {
       downloadVCard(card);
     } catch (err) {

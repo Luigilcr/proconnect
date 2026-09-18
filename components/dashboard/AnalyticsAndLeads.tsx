@@ -11,6 +11,7 @@
 import React, { useState, useEffect } from 'react';
 import { FullCard, WhatsAppLead, LeadStatus } from '@/lib/types';
 import { getAnalyticsForCard, getLeadsByCardId, updateLeadStatus } from '@/lib/data/card-store';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import {
   Eye,
   Download,
@@ -28,6 +29,7 @@ import {
   Briefcase,
   FileCheck,
   Search,
+  UserPlus,
 } from 'lucide-react';
 
 interface AnalyticsAndLeadsProps {
@@ -57,15 +59,62 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `proconnect-leads-${card.slug}.csv`;
+    link.download = `proconnect-contactos-${card.slug}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  const downloadLeadVCard = (lead: WhatsAppLead) => {
+    const vcard = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      `FN:${lead.visitor_name}`,
+      `N:;${lead.visitor_name};;;`,
+      lead.company_name ? `ORG:${lead.company_name}` : '',
+      lead.phone_number ? `TEL;TYPE=CELL:${lead.phone_number}` : '',
+      lead.email ? `EMAIL:${lead.email}` : '',
+      `NOTE:Contacto capturado con ProConnect NFC (${card.full_name}) - ${lead.subject || lead.interest_notes || ''}`,
+      'END:VCARD',
+    ]
+      .filter(Boolean)
+      .join('\r\n');
+
+    const blob = new Blob([vcard], { type: 'text/vcard;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${(lead.visitor_name || 'contacto').replace(/[^a-zA-Z0-9]/g, '_')}.vcf`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [notesInput, setNotesInput] = useState('');
 
-  const loadLeads = () => {
-    setLeads(getLeadsByCardId(card.id));
+  const loadLeads = async () => {
+    const localLeads = getLeadsByCardId(card.id);
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('whatsapp_leads')
+          .select('*')
+          .eq('card_id', card.id)
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          const map = new Map<string, WhatsAppLead>();
+          data.forEach((l: any) => map.set(l.id, l));
+          localLeads.forEach((l) => {
+            if (!map.has(l.id)) map.set(l.id, l);
+          });
+          setLeads(Array.from(map.values()));
+          return;
+        }
+      } catch (err) {
+        console.warn('Error cargando leads de Supabase:', err);
+      }
+    }
+    setLeads(localLeads);
   };
 
   useEffect(() => {
@@ -74,8 +123,16 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
 
   const analytics = getAnalyticsForCard(card.id);
 
-  const handleStatusChange = (leadId: string, newStatus: LeadStatus) => {
+  const handleStatusChange = async (leadId: string, newStatus: LeadStatus) => {
     updateLeadStatus(leadId, newStatus);
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase
+          .from('whatsapp_leads')
+          .update({ status: newStatus })
+          .eq('id', leadId);
+      } catch (e) {}
+    }
     loadLeads();
   };
 
@@ -334,6 +391,17 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
                       <MessageCircle className="w-3.5 h-3.5" />
                       <span>WhatsApp</span>
                     </a>
+
+                    {/* Botón Guardar en Teléfono (vCard) */}
+                    <button
+                      type="button"
+                      onClick={() => downloadLeadVCard(lead)}
+                      className="px-3 py-1.5 rounded-xl border border-sky-200 dark:border-sky-800/60 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 text-xs font-bold flex items-center gap-1.5 transition-all hover:scale-105"
+                      title="Guardar contacto en la agenda de tu teléfono"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Guardar en Teléfono</span>
+                    </button>
 
                     {/* Botón Llamar */}
                     <a

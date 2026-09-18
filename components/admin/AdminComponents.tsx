@@ -463,6 +463,7 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
             <tr>
               <th className="px-5 py-3.5">Nombre</th>
               <th className="px-5 py-3.5">Email</th>
+              <th className="px-5 py-3.5">Fecha de Registro</th>
               <th className="px-5 py-3.5">Rol Actual</th>
               <th className="px-5 py-3.5 text-right">Modificar Rol</th>
             </tr>
@@ -478,6 +479,17 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
                 </td>
                 <td className="px-5 py-3.5 text-slate-600 dark:text-slate-300">
                   {user.email}
+                </td>
+                <td className="px-5 py-3.5 text-slate-500 font-mono text-[11px]">
+                  {user.created_at
+                    ? new Date(user.created_at).toLocaleDateString('es-ES', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : 'Preexistente'}
                 </td>
                 <td className="px-5 py-3.5">
                   <span

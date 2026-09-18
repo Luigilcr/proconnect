@@ -14,6 +14,8 @@ import { ContactExchangeModal } from '@/components/card/ContactExchangeModal';
 import { AlertCircle, ArrowLeft, Radio, ShieldAlert, UserCheck } from 'lucide-react';
 import Link from 'next/link';
 
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+
 export default function PublicCardProfilePage() {
   const params = useParams();
   const rawSlug = params?.slug;
@@ -45,24 +47,62 @@ export default function PublicCardProfilePage() {
     }
 
     const decoded = decodeURIComponent(activeSlug).toLowerCase().trim();
-    const localCard = getCardBySlug(decoded);
 
-    if (localCard) {
-      setCard(localCard);
-      setLoading(false);
-      return;
-    }
+    const fetchCard = async () => {
+      // 1. Intentar consultar Supabase en tiempo real (Nube)
+      if (isSupabaseEnabled && supabase) {
+        try {
+          // Intentar primero con la RPC segura
+          const { data: rpcCard, error: rpcErr } = await supabase.rpc('get_public_card', {
+            p_slug: decoded,
+          });
 
-    // Fallback: Consultar API del servidor por si fue creada desde otro dispositivo
-    fetch(`/api/cards?slug=${encodeURIComponent(decoded)}`)
-      .then((res) => res.json())
-      .then((data) => {
+          if (!rpcErr && rpcCard) {
+            setCard(rpcCard);
+            setLoading(false);
+            return;
+          }
+
+          // Consulta directa fallback a Supabase
+          const { data: directCard, error: directErr } = await supabase
+            .from('cards')
+            .select('*, links:card_links(*)')
+            .ilike('slug', decoded)
+            .maybeSingle();
+
+          if (!directErr && directCard) {
+            setCard(directCard);
+            setLoading(false);
+            return;
+          }
+        } catch (err) {
+          console.warn('Error consultando Supabase en /c/[slug]:', err);
+        }
+      }
+
+      // 2. Intentar buscar en almacenamiento local (para preview o creador)
+      const localCard = getCardBySlug(decoded);
+      if (localCard) {
+        setCard(localCard);
+        setLoading(false);
+        return;
+      }
+
+      // 3. Fallback: Consultar API del servidor
+      try {
+        const res = await fetch(`/api/cards?slug=${encodeURIComponent(decoded)}`);
+        const data = await res.json();
         if (data.success && data.card) {
           setCard(data.card);
         }
-      })
-      .catch((err) => console.error('Error al consultar tarjeta en servidor:', err))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        console.error('Error al consultar tarjeta en servidor:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCard();
   }, [rawSlug]);
 
   // Verificar si la empresa matriz está suspendida por falta de pago (Kill Switch)

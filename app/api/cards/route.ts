@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { DEMO_CARDS } from '@/lib/data/demo-data';
 import { FullCard } from '@/lib/types';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'cards.json');
 
@@ -45,6 +46,23 @@ function persistServerCards(cards: FullCard[]) {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const slug = searchParams.get('slug')?.toLowerCase().trim();
+
+  // 1. Intentar consultar Supabase en tiempo real si está activo
+  if (slug && isSupabaseEnabled && supabase) {
+    try {
+      const { data: sbCard, error } = await supabase
+        .from('cards')
+        .select('*, links:card_links(*)')
+        .ilike('slug', slug)
+        .maybeSingle();
+
+      if (!error && sbCard) {
+        return NextResponse.json({ success: true, card: sbCard });
+      }
+    } catch (err) {
+      console.warn('Error querying Supabase in /api/cards:', err);
+    }
+  }
 
   const cards = loadServerCards();
 
