@@ -35,6 +35,14 @@ async function getCardForServer(slug: string): Promise<FullCard | null> {
       if (!error && dbCard) {
         return dbCard;
       }
+
+      // Fallback a RPC con Security Definer (necesario cuando RLS está activo)
+      const { data: rpcCard } = await supabase.rpc('get_public_card', {
+        p_slug: cleanSlug,
+      });
+      if (rpcCard) {
+        return rpcCard;
+      }
     } catch (e) {
       console.warn('Error en getCardForServer Supabase:', e);
     }
@@ -60,13 +68,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const description = `${titlePart}${card.bio || 'Toca para guardar mi contacto en tu teléfono o comunicarte conmigo al instante.'}`;
   const publicUrl = `https://proconnect-pearl.vercel.app/c/${card.slug}`;
 
-  // Imagen para previsualización (Foto de perfil, o portada, o fallback)
-  const imageUrl =
-    card.profile_photo_url && !card.profile_photo_url.startsWith('data:')
-      ? card.profile_photo_url
-      : card.cover_photo_url && !card.cover_photo_url.startsWith('data:')
-      ? card.cover_photo_url
-      : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=800';
+  // Imagen para previsualización en WhatsApp / redes
+  let imageUrl = `https://proconnect-pearl.vercel.app/api/cards/image?slug=${encodeURIComponent(card.slug)}`;
+  if (card.profile_photo_url && (card.profile_photo_url.startsWith('http://') || card.profile_photo_url.startsWith('https://'))) {
+    imageUrl = card.profile_photo_url;
+  }
 
   return {
     title,
