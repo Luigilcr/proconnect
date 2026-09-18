@@ -1,0 +1,106 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── ProConnect Brand Custom Properties ─────────────────── */
+@layer base {
+  :root {
+    --brand-navy:       #0A2540;
+    --brand-blue:       #1E3A8A;
+    --brand-mid:        #2563EB;
+    --brand-cyan:       #00B4D8;
+    --brand-aqua:       #38BDF8;
+    --brand-light:      #E0F7FA;
+    --brand-bg:         #F8FAFC;
+    --brand-dark:       #081220;
+
+    --background:       255 255 255;
+    --foreground:       10 37 64;
+    --card-bg:          248 250 252;
+    --border:           226 232 240;
+  }
+
+  .dark {
+    --background:       8 18 32;
+    --foreground:       248 250 252;
+    --card-bg:          10 37 64;
+    --border:           30 58 138;
+  }
+
+  body {
+    color: var(--brand-navy);
+    background-color: var(--brand-bg);
+    min-height: 100vh;
+  }
+
+  .dark body {
+    color: #f8fafc;
+    background-color: var(--brand-dark);
+  }
+}
+
+/* ── Scrollbar utilities ─────────────────────────────────── */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── NFC Pulse Animation ─────────────────────────────────── */
+.nfc-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid #00B4D8;
+  animation: nfc-ring 1.4s ease-out infinite;
+}
+.nfc-ring:nth-child(2) { animation-delay: 0.4s; }
+.nfc-ring:nth-child(3) { animation-delay: 0.8s; }
+
+@keyframes nfc-ring {
+  0%   { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* ── Brand gradient text ─────────────────────────────────── */
+.brand-gradient-text {
+  background: linear-gradient(135deg, #0A2540 0%, #1E3A8A 40%, #00B4D8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.brand-gradient-text-light {
+  background: linear-gradient(135deg, #2563EB 0%, #00B4D8 60%, #38BDF8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Brand button ────────────────────────────────────────── */
+.btn-brand {
+  background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 60%, #00B4D8 100%);
+  color: white;
+  border-radius: 0.75rem;
+  padding: 0.625rem 1.25rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+}
+.btn-brand:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 180, 216, 0.4);
+}
+
+/* ── Glass card ─────────────────────────────────────────── */
+.glass-card {
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0,180,216,0.15);
+  border-radius: 1.5rem;
+}
+.dark .glass-card {
+  background: rgba(10,37,64,0.75);
+  border-color: rgba(0,180,216,0.25);
+}
