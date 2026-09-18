@@ -49,6 +49,7 @@ import { extractPaletteFromImage } from '@/lib/color-extractor';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { QRCodeSVG } from 'qrcode.react';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import {
   Building2,
   Briefcase,
@@ -82,8 +83,9 @@ import {
   ToggleRight,
   Edit3,
   Eye,
+  Loader2,
+  Upload,
 } from 'lucide-react';
-
 
 export default function OrgDashboardPage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -92,12 +94,29 @@ export default function OrgDashboardPage() {
   const [orgLeads, setOrgLeads] = useState<WhatsAppLead[]>([]);
   const [crmFilterSalesperson, setCrmFilterSalesperson] = useState<string>('all');
   const [crmFilterStatus, setCrmFilterStatus] = useState<string>('all');
+  const [loadingData, setLoadingData] = useState<boolean>(true);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-  const loadOrgLeads = useCallback((orgId: string) => {
-    if (orgId) {
-      setOrgLeads(getLeadsByOrgId(orgId));
-    }
-  }, []);
+  // Estados de Crear Empresa Modal
+  const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
+  const [newOrgName, setNewOrgName] = useState('');
+  const [newOrgSlug, setNewOrgSlug] = useState('');
+  const [newOrgLogo, setNewOrgLogo] = useState('');
+  const [newOrgPrimaryColor, setNewOrgPrimaryColor] = useState('#0EA5E9');
+  const [newOrgSecondaryColor, setNewOrgSecondaryColor] = useState('#0369A1');
+  const [newOrgAccentColor, setNewOrgAccentColor] = useState('#38BDF8');
+  const [newOrgBgColor, setNewOrgBgColor] = useState('#0F172A');
+  const [newOrgMaxCards, setNewOrgMaxCards] = useState(10);
+  const [isCreatingOrg, setIsCreatingOrg] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  // Estados de Añadir Colaborador Modal
+  const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
+  const [empName, setEmpName] = useState('');
+  const [empTitle, setEmpTitle] = useState('');
+  const [empEmail, setEmpEmail] = useState('');
+  const [empPhone, setEmpPhone] = useState('');
+  const [isCreatingEmp, setIsCreatingEmp] = useState(false);
 
   const [isExtracting, setIsExtracting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -129,24 +148,170 @@ export default function OrgDashboardPage() {
     setRestOrders(getAllOrdersByOrg(orgId));
   }, []);
 
-  const loadOrgData = () => {
-    const orgs = getStoredOrganizations();
-    setOrganizations(orgs);
-    if (orgs.length > 0) {
-      const currentOrg = orgs.find((o) => o.id === selectedOrgId) || orgs[0];
-      setSelectedOrgId(currentOrg.id);
-      setLogoInput(currentOrg.logo_url || '');
-      setColors(currentOrg.brand_colors);
-      const teamCards = getCardsByOrganizationId(currentOrg.id);
-      setCards(teamCards);
-      loadOrgLeads(currentOrg.id);
+  const loadOrgLeads = useCallback(async (orgId: string) => {
+    if (!orgId) return;
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const { data: dbCards } = await supabase
+          .from('cards')
+          .select('id')
+          .eq('organization_id', orgId);
+        if (dbCards && dbCards.length > 0) {
+          const cardIds = dbCards.map((c: any) => c.id);
+          const { data: dbLeads } = await supabase
+            .from('whatsapp_leads')
+            .select('*')
+            .in('card_id', cardIds)
+            .order('created_at', { ascending: false });
+          if (dbLeads) {
+            setOrgLeads(dbLeads);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Error loading leads in org-dashboard:', err);
+      }
     }
+    setOrgLeads(getLeadsByOrgId(orgId));
+  }, []);
+
+  const handleUpdateLeadStatus = async (leadId: string, newStatus: LeadStatus) => {
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase
+          .from('whatsapp_leads')
+          .update({ status: newStatus })
+          .eq('id', leadId);
+      } catch (err) {
+        console.warn('Error updating lead status in Supabase:', err);
+      }
+    }
+    updateLeadStatus(leadId, newStatus);
+    setOrgLeads((prev) =>
+      prev.map((l) => (l.id === leadId ? { ...l, status: newStatus } : l))
+    );
   };
+
+  const loadOrgData = useCallback(async () => {
+    setLoadingData(true);
+    let userSession: any = null;
+    let userRole = 'client';
+    let userOrgId: string | null = null;
+
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        userSession = sessionData?.session?.user || null;
+        if (userSession) {
+          const { data: userProfile } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userSession.id)
+            .maybeSingle();
+
+          if (userProfile) {
+            userRole = userProfile.role || (userSession.email?.toLowerCase() === 'luigicolonico@gmail.com' ? 'superadmin' : 'client');
+            userOrgId = userProfile.organization_id || null;
+            setCurrentUser({ ...userSession, ...userProfile, role: userRole });
+          } else {
+            setCurrentUser(userSession);
+          }
+        }
+      } catch (err) {
+        console.warn('Error checking session in org dashboard:', err);
+      }
+    }
+
+    let loadedOrgs: Organization[] = [];
+
+    // 1. Cargar desde Supabase
+    if (isSupabaseEnabled && supabase) {
+      try {
+        let query = supabase.from('organizations').select('*');
+        // Si no es superadmin ni luigicolonico@gmail.com, filtrar por su org asignada si tiene una
+        if (userRole !== 'superadmin' && userSession?.email?.toLowerCase() !== 'luigicolonico@gmail.com') {
+          if (userOrgId) {
+            query = query.eq('id', userOrgId);
+          }
+        }
+        const { data: sbOrgs, error } = await query.order('created_at', { ascending: false });
+        if (!error && sbOrgs && sbOrgs.length > 0) {
+          loadedOrgs = sbOrgs;
+        }
+      } catch (err) {
+        console.warn('Error fetching orgs from Supabase:', err);
+      }
+    }
+
+    // 2. Fallback a datos locales si Supabase está vacío o offline
+    if (loadedOrgs.length === 0) {
+      loadedOrgs = getStoredOrganizations();
+    }
+
+    setOrganizations(loadedOrgs);
+
+    if (loadedOrgs.length > 0) {
+      const active = loadedOrgs.find((o) => o.id === selectedOrgId) || loadedOrgs[0];
+      setSelectedOrgId(active.id);
+      setLogoInput(active.logo_url || '');
+      setColors(active.brand_colors || {
+        primary: '#0EA5E9',
+        secondary: '#0369A1',
+        accent: '#38BDF8',
+        background: '#0F172A',
+      });
+
+      // Cargar tarjetas del equipo
+      if (isSupabaseEnabled && supabase) {
+        try {
+          const { data: dbCards, error: cErr } = await supabase
+            .from('cards')
+            .select('*, links:card_links(*)')
+            .eq('organization_id', active.id);
+
+          if (!cErr && dbCards && dbCards.length > 0) {
+            setCards(dbCards);
+            const cardIds = dbCards.map((c: any) => c.id);
+            if (cardIds.length > 0) {
+              const { data: dbLeads } = await supabase
+                .from('whatsapp_leads')
+                .select('*')
+                .in('card_id', cardIds)
+                .order('created_at', { ascending: false });
+              if (dbLeads) {
+                setOrgLeads(dbLeads);
+              } else {
+                setOrgLeads(getLeadsByOrgId(active.id));
+              }
+            } else {
+              setOrgLeads([]);
+            }
+          } else {
+            const teamCards = getCardsByOrganizationId(active.id);
+            setCards(teamCards);
+            setOrgLeads(getLeadsByOrgId(active.id));
+          }
+        } catch {
+          const teamCards = getCardsByOrganizationId(active.id);
+          setCards(teamCards);
+          setOrgLeads(getLeadsByOrgId(active.id));
+        }
+      } else {
+        const teamCards = getCardsByOrganizationId(active.id);
+        setCards(teamCards);
+        setOrgLeads(getLeadsByOrgId(active.id));
+      }
+    } else {
+      setCards([]);
+      setOrgLeads([]);
+    }
+    setLoadingData(false);
+  }, [selectedOrgId]);
 
   useEffect(() => {
     loadOrgData();
     loadRestaurantData();
-  }, [selectedOrgId, loadRestaurantData]);
+  }, [loadOrgData, loadRestaurantData]);
 
   const currentOrg =
     organizations.find((o) => o.id === selectedOrgId) || organizations[0];
@@ -165,17 +330,70 @@ export default function OrgDashboardPage() {
     }
   };
 
+  // Subir logotipo a través de la API
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>, isForNewOrg = false) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingLogo(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.success && data.url) {
+        if (isForNewOrg) {
+          setNewOrgLogo(data.url);
+        } else {
+          setLogoInput(data.url);
+        }
+      } else {
+        alert('Error al subir logotipo: ' + (data.error || 'Revisa el archivo'));
+      }
+    } catch (err) {
+      console.error('Error uploading logo:', err);
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
   // Guardar configuración de marca de la organización
-  const handleSaveBrand = () => {
+  const handleSaveBrand = async () => {
     if (!currentOrg) return;
     const updated: Organization = {
       ...currentOrg,
       logo_url: logoInput.trim() || null,
       brand_colors: colors,
     };
+
+    // 1. Supabase
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('organizations').update({
+          logo_url: updated.logo_url,
+          brand_colors: updated.brand_colors,
+        }).eq('id', currentOrg.id);
+
+        if (currentOrg.enforce_brand_lock) {
+          await supabase.from('cards').update({
+            primary_color: colors.primary,
+            secondary_color: colors.secondary,
+            accent_color: colors.accent,
+            background_color: colors.background,
+            logo_url: updated.logo_url,
+          }).eq('organization_id', currentOrg.id);
+        }
+      } catch (err) {
+        console.warn('Error actualizando marca en Supabase:', err);
+      }
+    }
+
+    // 2. Almacén local
     saveOrganization(updated);
 
-    // Si Brand Lock está activo, sincronizar los colores y logos a todas las tarjetas del equipo
     if (currentOrg.enforce_brand_lock) {
       cards.forEach((c) => {
         saveCard({
@@ -189,87 +407,240 @@ export default function OrgDashboardPage() {
       });
     }
 
-    loadOrgData();
+    await loadOrgData();
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
   };
 
   // Alternar Brand Lock
-  const handleToggleBrandLock = () => {
+  const handleToggleBrandLock = async () => {
     if (!currentOrg) return;
+    const nextVal = !currentOrg.enforce_brand_lock;
     const updated: Organization = {
       ...currentOrg,
-      enforce_brand_lock: !currentOrg.enforce_brand_lock,
+      enforce_brand_lock: nextVal,
     };
+
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('organizations').update({
+          enforce_brand_lock: nextVal,
+        }).eq('id', currentOrg.id);
+      } catch (err) {
+        console.warn('Error alternando brand lock en Supabase:', err);
+      }
+    }
+
     saveOrganization(updated);
-    loadOrgData();
+    await loadOrgData();
   };
 
   // Alternar estado de tarjeta de empleado
-  const handleToggleCard = (cardId: string) => {
+  const handleToggleCard = async (cardId: string, currentStatus: boolean) => {
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('cards').update({
+          is_active: !currentStatus,
+        }).eq('id', cardId);
+      } catch (err) {
+        console.warn('Error actualizando estado en Supabase:', err);
+      }
+    }
     toggleCardActiveStatus(cardId);
-    loadOrgData();
+    await loadOrgData();
   };
 
-  // Añadir colaborador rápido
-  const handleAddEmployee = () => {
-    if (!currentOrg) return;
-    const count = cards.length + 1;
-    const newEmployeeCard: FullCard = {
-      id: 'c_' + Date.now(),
-      user_id: 'a0000000-0000-0000-0000-000000000002',
+  // Crear Organización
+  const handleCreateOrgSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newOrgName.trim()) return;
+
+    setIsCreatingOrg(true);
+    const newId = crypto.randomUUID();
+    const cleanSlug = (newOrgSlug.trim() || newOrgName.trim())
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
+
+    const newOrg: Organization = {
+      id: newId,
+      name: newOrgName.trim(),
+      slug: cleanSlug,
+      logo_url: newOrgLogo.trim() || null,
+      brand_colors: {
+        primary: newOrgPrimaryColor,
+        secondary: newOrgSecondaryColor,
+        accent: newOrgAccentColor,
+        background: newOrgBgColor,
+      },
+      font_family: 'Inter',
+      allowed_layouts: ['modern', 'executive', 'minimal', 'banner_header', 'card_id_badge', 'creative_grid'],
+      enforce_brand_lock: true,
+      max_cards: Number(newOrgMaxCards) || 10,
+      created_at: new Date().toISOString(),
+    };
+
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const { error: insErr } = await supabase.from('organizations').insert([newOrg]);
+        if (insErr) {
+          console.error('Error insertando organización en Supabase:', insErr);
+        }
+
+        const { data: sessionData } = await supabase.auth.getSession();
+        const uid = sessionData?.session?.user?.id;
+        if (uid) {
+          await supabase.from('users').update({
+            organization_id: newId,
+            role: 'org_admin',
+          }).eq('id', uid);
+        }
+      } catch (err) {
+        console.error('Error al persistir organización en Supabase:', err);
+      }
+    }
+
+    saveOrganization(newOrg);
+    setSelectedOrgId(newId);
+    setShowCreateOrgModal(false);
+    setNewOrgName('');
+    setNewOrgSlug('');
+    setNewOrgLogo('');
+    setIsCreatingOrg(false);
+    await loadOrgData();
+  };
+
+  // Añadir Colaborador Submit
+  const handleAddEmployeeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentOrg || !empName.trim()) return;
+
+    setIsCreatingEmp(true);
+    const cardId = crypto.randomUUID();
+    const slugBase = empName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const cardSlug = `${slugBase}-${Date.now().toString().slice(-4)}`;
+
+    let uid = 'a0000000-0000-0000-0000-000000000002';
+    if (isSupabaseEnabled && supabase) {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session?.user?.id) {
+        uid = sessionData.session.user.id;
+      }
+    }
+
+    const links: any[] = [];
+    if (empEmail.trim()) {
+      links.push({
+        id: crypto.randomUUID(),
+        card_id: cardId,
+        type: 'email' as const,
+        label: 'Correo Electrónico',
+        url: `mailto:${empEmail.trim()}`,
+        icon_name: 'Mail',
+        is_active: true,
+        position_order: 0,
+      });
+    }
+    if (empPhone.trim()) {
+      links.push({
+        id: crypto.randomUUID(),
+        card_id: cardId,
+        type: 'phone' as const,
+        label: 'Teléfono Directo',
+        url: `tel:${empPhone.trim()}`,
+        icon_name: 'Phone',
+        is_active: true,
+        position_order: 1,
+      });
+    }
+
+    const newCard: FullCard = {
+      id: cardId,
+      user_id: uid,
       organization_id: currentOrg.id,
-      slug: `colaborador-${count}-${Date.now().toString().slice(-4)}`,
+      slug: cardSlug,
       is_active: true,
-      full_name: `Colaborador ${count}`,
-      job_title: 'Especialista Corporativo',
+      full_name: empName.trim(),
+      job_title: empTitle.trim() || 'Colaborador',
       company_name: currentOrg.name,
-      bio: `Miembro del equipo profesional en ${currentOrg.name}.`,
-      profile_photo_url:
-        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=600',
-      cover_photo_url:
-        'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1200',
+      bio: `Miembro oficial del equipo en ${currentOrg.name}.`,
+      profile_photo_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=600',
+      cover_photo_url: 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1200',
       logo_url: currentOrg.logo_url,
       layout_type: 'banner_header',
       avatar_position: 'header_floating',
       button_style: 'gradient',
       border_radius: 'lg',
-      primary_color: currentOrg.brand_colors.primary,
-      secondary_color: currentOrg.brand_colors.secondary,
-      accent_color: currentOrg.brand_colors.accent,
-      background_color: currentOrg.brand_colors.background,
-      font_family: currentOrg.font_family,
+      primary_color: currentOrg.brand_colors?.primary || '#0EA5E9',
+      secondary_color: currentOrg.brand_colors?.secondary || '#0369A1',
+      accent_color: currentOrg.brand_colors?.accent || '#38BDF8',
+      background_color: currentOrg.brand_colors?.background || '#0F172A',
+      font_family: currentOrg.font_family || 'Inter',
       font_weight: 'semibold',
       include_photo: true,
-      custom_vcf_notes: `Contacto oficial verificado por ${currentOrg.name}.`,
+      custom_vcf_notes: `Contacto verificado por ${currentOrg.name}.`,
       created_at: new Date().toISOString(),
-      links: [
-        {
-          id: 'l_emp_' + Date.now(),
-          card_id: 'c_' + Date.now(),
-          type: 'email',
-          label: 'Correo de Oficina',
-          url: `contacto@${currentOrg.slug}.com`,
-          icon_name: 'Mail',
-          is_active: true,
-          position_order: 1,
-        },
-      ],
+      links: links,
       multimedia: [],
     };
 
-    saveCard(newEmployeeCard);
-    loadOrgData();
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('cards').insert([{
+          id: newCard.id,
+          user_id: newCard.user_id,
+          organization_id: newCard.organization_id,
+          slug: newCard.slug,
+          is_active: newCard.is_active,
+          full_name: newCard.full_name,
+          job_title: newCard.job_title,
+          company_name: newCard.company_name,
+          bio: newCard.bio,
+          profile_photo_url: newCard.profile_photo_url,
+          cover_photo_url: newCard.cover_photo_url,
+          logo_url: newCard.logo_url,
+          layout_type: newCard.layout_type,
+          avatar_position: newCard.avatar_position,
+          button_style: newCard.button_style,
+          border_radius: newCard.border_radius,
+          primary_color: newCard.primary_color,
+          secondary_color: newCard.secondary_color,
+          accent_color: newCard.accent_color,
+          background_color: newCard.background_color,
+          font_family: newCard.font_family,
+          font_weight: newCard.font_weight,
+          include_photo: newCard.include_photo,
+          custom_vcf_notes: newCard.custom_vcf_notes,
+          created_at: newCard.created_at,
+        }]);
+
+        if (links.length > 0) {
+          await supabase.from('card_links').insert(links);
+        }
+      } catch (err) {
+        console.warn('Error inserting card to Supabase:', err);
+      }
+    }
+
+    saveCard(newCard);
+    setShowAddEmployeeModal(false);
+    setEmpName('');
+    setEmpTitle('');
+    setEmpEmail('');
+    setEmpPhone('');
+    setIsCreatingEmp(false);
+    await loadOrgData();
   };
 
   const handlePrintBatch = () => {
     window.print();
   };
 
-  if (!currentOrg) {
+  if (loadingData && organizations.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
-        <p className="text-sm font-semibold text-slate-500">Cargando datos corporativos...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 gap-3">
+        <Loader2 className="w-8 h-8 text-purple-600 animate-spin" />
+        <p className="text-sm font-semibold text-slate-500">Cargando datos corporativos de ProConnect...</p>
       </div>
     );
   }
@@ -300,30 +671,64 @@ export default function OrgDashboardPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {/* Selector de Organización */}
-            <select
-              value={selectedOrgId}
-              onChange={(e) => setSelectedOrgId(e.target.value)}
-              className="px-3.5 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-bold shadow-sm"
-            >
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
-            </select>
+            {organizations.length > 0 && (
+              <select
+                value={selectedOrgId}
+                onChange={(e) => setSelectedOrgId(e.target.value)}
+                className="px-3.5 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-bold shadow-sm"
+              >
+                {organizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            )}
 
             <button
-              onClick={() => setShowBatchQRModal(true)}
-              className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-md flex items-center gap-1.5 transition-all hover:scale-105"
+              onClick={() => setShowCreateOrgModal(true)}
+              className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md flex items-center gap-1.5 transition-all hover:scale-105"
             >
-              <QrCode className="w-4 h-4" />
-              <span>Exportar Códigos QR en Lote</span>
+              <Plus className="w-4 h-4" />
+              <span>Crear Empresa</span>
             </button>
+
+            {organizations.length > 0 && (
+              <button
+                onClick={() => setShowBatchQRModal(true)}
+                className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-md flex items-center gap-1.5 transition-all hover:scale-105"
+              >
+                <QrCode className="w-4 h-4" />
+                <span>Exportar Códigos QR en Lote</span>
+              </button>
+            )}
           </div>
         </div>
 
+        {/* Estado Vacío si no hay empresas */}
+        {organizations.length === 0 && (
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-12 border border-slate-200/80 dark:border-slate-800 shadow-sm text-center max-w-xl mx-auto space-y-4 my-8">
+            <div className="w-16 h-16 rounded-3xl bg-purple-500/10 text-purple-600 border border-purple-500/20 flex items-center justify-center mx-auto">
+              <Building2 className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-black text-slate-900 dark:text-white">Aún no tienes una Empresa Registrada</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              Crea tu primera organización corporativa para unificar la marca de tu negocio, emitir credenciales digitales NFC a tus empleados y canalizar prospectos comerciales mediante el CRM en tiempo real.
+            </p>
+            <button
+              onClick={() => setShowCreateOrgModal(true)}
+              className="px-6 py-3 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 inline-flex items-center gap-2 transition-all hover:scale-105"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Crear Mi Empresa Ahora</span>
+            </button>
+          </div>
+        )}
+
+        {currentOrg && (
+          <>
         {/* 1. Métricas Globales de la Empresa */}
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
@@ -627,7 +1032,7 @@ export default function OrgDashboardPage() {
             </div>
 
             <button
-              onClick={handleAddEmployee}
+              onClick={() => setShowAddEmployeeModal(true)}
               disabled={cards.length >= currentOrg.max_cards}
               className="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
             >
@@ -661,10 +1066,10 @@ export default function OrgDashboardPage() {
                             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'
                           }
                           alt={card.full_name}
-                          className="w-10 h-10 rounded-xl object-cover"
+                          className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-slate-700 shadow-sm"
                         />
                         <div>
-                          <p className="font-bold text-slate-900 dark:text-white text-xs">
+                          <p className="font-bold text-slate-900 dark:text-white">
                             {card.full_name}
                           </p>
                           <p className="text-[11px] text-slate-500">
@@ -674,12 +1079,12 @@ export default function OrgDashboardPage() {
                       </div>
                     </td>
 
-                    <td className="px-5 py-4 font-mono text-[11px] text-sky-600 dark:text-sky-400">
+                    <td className="px-5 py-4 font-mono text-[11px] text-purple-600 dark:text-purple-400">
                       /c/{card.slug}
                     </td>
 
                     <td className="px-5 py-4">
-                      <span className="capitalize px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold font-mono text-[10px]">
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         {card.layout_type || 'modern'}
                       </span>
                     </td>
@@ -687,7 +1092,7 @@ export default function OrgDashboardPage() {
                     <td className="px-5 py-4 text-center">
                       <button
                         type="button"
-                        onClick={() => handleToggleCard(card.id)}
+                        onClick={() => handleToggleCard(card.id, card.is_active)}
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
                           card.is_active
                             ? 'bg-emerald-500'
@@ -903,7 +1308,6 @@ export default function OrgDashboardPage() {
             )}
           </div>
         </section>
-      </main>
 
       {/* MODAL DE EXPORTACIÓN EN LOTE DE CÓDIGOS QR */}
       {showBatchQRModal && (
@@ -1199,10 +1603,7 @@ export default function OrgDashboardPage() {
                           <td className="px-6 py-4">
                             <select
                               value={lead.status || 'nuevo'}
-                              onChange={(e) => {
-                                updateLeadStatus(lead.id, e.target.value as LeadStatus);
-                                loadOrgLeads(currentOrg.id);
-                              }}
+                              onChange={(e) => handleUpdateLeadStatus(lead.id, e.target.value as LeadStatus)}
                               className="px-2.5 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold outline-none"
                             >
                               <option value="nuevo">⏳ Nuevo</option>
@@ -1449,6 +1850,366 @@ export default function OrgDashboardPage() {
           )}
         </div>
       </section>
+          </>
+        )}
+      </main>
+
+      {/* MODAL CREAR EMPRESA */}
+      {showCreateOrgModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setShowCreateOrgModal(false)}
+        >
+          <div
+            className="w-full max-w-xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">
+                    Registrar Nueva Empresa (B2B)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Crea un espacio corporativo para centralizar la marca y tus colaboradores.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateOrgModal(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateOrgSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Nombre de la Organización / Negocio *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newOrgName}
+                  onChange={(e) => {
+                    setNewOrgName(e.target.value);
+                    if (!newOrgSlug) {
+                      setNewOrgSlug(e.target.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''));
+                    }
+                  }}
+                  placeholder="Ej. Inversiones San Pedro C.A."
+                  className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Identificador / Slug URL *
+                </label>
+                <div className="flex items-center">
+                  <span className="px-3 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-400 border border-r-0 border-slate-300 dark:border-slate-700 rounded-l-xl text-xs font-mono">
+                    proconnect.app/c/
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={newOrgSlug}
+                    onChange={(e) => setNewOrgSlug(e.target.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''))}
+                    placeholder="inversiones-san-pedro"
+                    className="flex-1 px-3.5 py-2.5 text-xs rounded-r-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Logotipo de la Empresa */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Logotipo Corporativo (URL o subir archivo)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={newOrgLogo}
+                    onChange={(e) => setNewOrgLogo(e.target.value)}
+                    placeholder="https://tu-empresa.com/logo.png"
+                    className="flex-1 px-3.5 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                  <label className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex items-center gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{uploadingLogo ? 'Subiendo...' : 'Subir'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleLogoUpload(e, true)}
+                    />
+                  </label>
+                </div>
+                {newOrgLogo && (
+                  <div className="mt-2 flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                    <img src={newOrgLogo} alt="Logo Preview" className="w-8 h-8 object-contain rounded" />
+                    <span className="text-[11px] text-emerald-600 font-bold">✓ Logotipo adjunto</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Colores Corporativos */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
+                  Paleta de Colores de Marca
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block mb-1">Primario</span>
+                    <div className="flex items-center gap-1.5 p-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                      <input
+                        type="color"
+                        value={newOrgPrimaryColor}
+                        onChange={(e) => setNewOrgPrimaryColor(e.target.value)}
+                        className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
+                      />
+                      <input
+                        type="text"
+                        value={newOrgPrimaryColor}
+                        onChange={(e) => setNewOrgPrimaryColor(e.target.value)}
+                        className="w-full text-[10px] font-mono bg-transparent border-0 text-slate-700 dark:text-slate-300"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block mb-1">Secundario</span>
+                    <div className="flex items-center gap-1.5 p-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                      <input
+                        type="color"
+                        value={newOrgSecondaryColor}
+                        onChange={(e) => setNewOrgSecondaryColor(e.target.value)}
+                        className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
+                      />
+                      <input
+                        type="text"
+                        value={newOrgSecondaryColor}
+                        onChange={(e) => setNewOrgSecondaryColor(e.target.value)}
+                        className="w-full text-[10px] font-mono bg-transparent border-0 text-slate-700 dark:text-slate-300"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block mb-1">Acento</span>
+                    <div className="flex items-center gap-1.5 p-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                      <input
+                        type="color"
+                        value={newOrgAccentColor}
+                        onChange={(e) => setNewOrgAccentColor(e.target.value)}
+                        className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
+                      />
+                      <input
+                        type="text"
+                        value={newOrgAccentColor}
+                        onChange={(e) => setNewOrgAccentColor(e.target.value)}
+                        className="w-full text-[10px] font-mono bg-transparent border-0 text-slate-700 dark:text-slate-300"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block mb-1">Fondo</span>
+                    <div className="flex items-center gap-1.5 p-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                      <input
+                        type="color"
+                        value={newOrgBgColor}
+                        onChange={(e) => setNewOrgBgColor(e.target.value)}
+                        className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
+                      />
+                      <input
+                        type="text"
+                        value={newOrgBgColor}
+                        onChange={(e) => setNewOrgBgColor(e.target.value)}
+                        className="w-full text-[10px] font-mono bg-transparent border-0 text-slate-700 dark:text-slate-300"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cupo Máximo de Tarjetas */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Cupo de Tarjetas NFC Incluidas
+                </label>
+                <select
+                  value={newOrgMaxCards}
+                  onChange={(e) => setNewOrgMaxCards(Number(e.target.value))}
+                  className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  <option value={10}>10 Tarjetas (Plan Startup)</option>
+                  <option value={25}>25 Tarjetas (Plan Pyme)</option>
+                  <option value={50}>50 Tarjetas (Plan Corporativo)</option>
+                  <option value={100}>100 Tarjetas (Plan Enterprise)</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateOrgModal(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingOrg}
+                  className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-600/20 flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isCreatingOrg ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Creando Empresa...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Guardar y Activar Empresa</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL AÑADIR COLABORADOR */}
+      {showAddEmployeeModal && currentOrg && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setShowAddEmployeeModal(false)}
+        >
+          <div
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-600 flex items-center justify-center">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">
+                    Añadir Colaborador al Equipo
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Emitir credencial inteligente bajo los colores y marca de {currentOrg.name}.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddEmployeeModal(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddEmployeeSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Nombre Completo del Colaborador *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={empName}
+                  onChange={(e) => setEmpName(e.target.value)}
+                  placeholder="Ej. Ana Cristina Valero"
+                  className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Cargo o Puesto de Trabajo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={empTitle}
+                  onChange={(e) => setEmpTitle(e.target.value)}
+                  placeholder="Ej. Directora de Operaciones"
+                  className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Correo Electrónico Oficial
+                  </label>
+                  <input
+                    type="email"
+                    value={empEmail}
+                    onChange={(e) => setEmpEmail(e.target.value)}
+                    placeholder="ana@empresa.com"
+                    className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Teléfono Directo / WhatsApp
+                  </label>
+                  <input
+                    type="tel"
+                    value={empPhone}
+                    onChange={(e) => setEmpPhone(e.target.value)}
+                    placeholder="+58 412 1234567"
+                    className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 rounded-xl text-[11px] text-purple-700 dark:text-purple-300 flex items-center gap-2">
+                <Shield className="w-4 h-4 flex-shrink-0" />
+                <span>
+                  La tarjeta heredará el logotipo y la paleta de {currentOrg.name} de forma instantánea.
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddEmployeeModal(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingEmp}
+                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-md shadow-sky-600/20 flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isCreatingEmp ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Emitiendo Tarjeta...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Emitir Tarjeta Inteligente</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <Footer />
     </div>

@@ -8,11 +8,14 @@
 
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
+import { FullCard } from '@/lib/types';
+import { getStoredCards } from '@/lib/data/card-store';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import {
   QrCode,
   Radio,
@@ -30,12 +33,16 @@ import {
   Info,
   Sliders,
   FileCheck,
+  CreditCard,
 } from 'lucide-react';
 
 type CardFinish = 'matte_black' | 'glossy_white' | 'brushed_metal' | 'eco_wood';
 
 export default function NfcStudioPage() {
-  const [targetUrl, setTargetUrl] = useState('https://proconnect.app/c/carlos-fibraconnect');
+  const [availableCards, setAvailableCards] = useState<FullCard[]>([]);
+  const [selectedCardId, setSelectedCardId] = useState<string>('');
+
+  const [targetUrl, setTargetUrl] = useState('https://proconnect-pearl.vercel.app/c/carlos-fibraconnect');
   const [cardHolder, setCardHolder] = useState('Carlos Mendoza');
   const [cardRole, setCardRole] = useState('Asesor Comercial de Fibra Óptica');
   const [companyName, setCompanyName] = useState('FibraConnect Telecom');
@@ -51,6 +58,65 @@ export default function NfcStudioPage() {
   const [nfcLog, setNfcLog] = useState<string | null>(null);
 
   const qrRef = useRef<SVGSVGElement | null>(null);
+
+  // Cargar tarjetas reales dinámicamente
+  useEffect(() => {
+    async function loadCards() {
+      let cardsList: FullCard[] = [];
+
+      // 1. Supabase
+      if (isSupabaseEnabled && supabase) {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const uid = sessionData?.session?.user?.id;
+          if (uid) {
+            const { data: sbCards, error } = await supabase
+              .from('cards')
+              .select('*')
+              .eq('user_id', uid);
+            if (!error && sbCards && sbCards.length > 0) {
+              cardsList = sbCards;
+            }
+          }
+        } catch (err) {
+          console.warn('Error fetching cards for NFC Studio:', err);
+        }
+      }
+
+      // 2. Fallback a local store
+      if (cardsList.length === 0) {
+        cardsList = getStoredCards();
+      }
+
+      setAvailableCards(cardsList);
+
+      if (cardsList.length > 0) {
+        const first = cardsList[0];
+        setSelectedCardId(first.id);
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://proconnect-pearl.vercel.app';
+        setTargetUrl(`${origin}/c/${first.slug}`);
+        setCardHolder(first.full_name);
+        setCardRole(first.job_title || 'Profesional');
+        setCompanyName(first.company_name || 'ProConnect');
+        setQrColor(first.primary_color || '#0A2540');
+      }
+    }
+
+    loadCards();
+  }, []);
+
+  const handleSelectCard = (cardId: string) => {
+    setSelectedCardId(cardId);
+    const found = availableCards.find((c) => c.id === cardId);
+    if (found) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://proconnect-pearl.vercel.app';
+      setTargetUrl(`${origin}/c/${found.slug}`);
+      setCardHolder(found.full_name);
+      setCardRole(found.job_title || '');
+      setCompanyName(found.company_name || 'ProConnect');
+      setQrColor(found.primary_color || '#0A2540');
+    }
+  };
 
   const handleCopy = async () => {
     try {
@@ -161,6 +227,27 @@ export default function NfcStudioPage() {
                   Configuración de la Tarjeta Física
                 </h2>
               </div>
+
+              {/* Selector de Tarjeta Guardada */}
+              {availableCards.length > 0 && (
+                <div className="space-y-1.5 p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                  <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Importar datos de tu Tarjeta Digital</span>
+                  </label>
+                  <select
+                    value={selectedCardId}
+                    onChange={(e) => handleSelectCard(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 bg-white font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    {availableCards.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.full_name} ({c.job_title || 'Tarjeta'}) - /c/{c.slug}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* URL de Destino */}
               <div className="space-y-1.5">

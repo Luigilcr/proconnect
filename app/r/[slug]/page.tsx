@@ -15,6 +15,8 @@ import {
   createOrder, callWaiter, requestBill, submitPayment,
   getPaymentInfo, getOrdersByTable,
 } from '@/lib/data/restaurant-store';
+import { getOrganizationBySlug } from '@/lib/data/card-store';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { BRASA_CRIOLLA_ORG_ID } from '@/lib/data/demo-data';
 import {
   MenuCategory, MenuItem, OrderItem, TableOrder,
@@ -168,7 +170,7 @@ function PaymentModal({
 function RestaurantMenuPageInner({ params }: { params: { slug: string } }) {
   const searchParams = useSearchParams();
   const tableNumber = parseInt(searchParams.get('mesa') || '1', 10);
-  const orgId = BRASA_CRIOLLA_ORG_ID;
+  const [orgId, setOrgId] = useState<string>(BRASA_CRIOLLA_ORG_ID);
 
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [itemsByCategory, setItemsByCategory] = useState<Record<string, MenuItem[]>>({});
@@ -187,6 +189,40 @@ function RestaurantMenuPageInner({ params }: { params: { slug: string } }) {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  // Resolver ID de organización dinámicamente por slug
+  useEffect(() => {
+    async function resolveOrg() {
+      const slug = params.slug?.toLowerCase().trim();
+      if (!slug) return;
+
+      if (isSupabaseEnabled && supabase) {
+        try {
+          const { data: org, error } = await supabase
+            .from('organizations')
+            .select('id')
+            .ilike('slug', slug)
+            .maybeSingle();
+
+          if (!error && org?.id) {
+            setOrgId(org.id);
+            return;
+          }
+        } catch (err) {
+          console.warn('Error resolving org from Supabase:', err);
+        }
+      }
+
+      const localOrg = getOrganizationBySlug(slug);
+      if (localOrg?.id) {
+        setOrgId(localOrg.id);
+      } else {
+        setOrgId(BRASA_CRIOLLA_ORG_ID);
+      }
+    }
+
+    resolveOrg();
+  }, [params.slug]);
 
   useEffect(() => {
     const cats = getMenuCategories(orgId);

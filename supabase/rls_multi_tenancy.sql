@@ -159,6 +159,11 @@ CREATE POLICY "orgs_read_and_admin"
     ON public.organizations FOR SELECT
     USING (true);
 
+DROP POLICY IF EXISTS "orgs_insert_authenticated" ON public.organizations;
+CREATE POLICY "orgs_insert_authenticated"
+    ON public.organizations FOR INSERT
+    WITH CHECK (auth.uid() IS NOT NULL);
+
 DROP POLICY IF EXISTS "orgs_update_admin" ON public.organizations;
 CREATE POLICY "orgs_update_admin"
     ON public.organizations FOR UPDATE
