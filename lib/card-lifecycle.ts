@@ -25,7 +25,7 @@ export interface CardExpirationInfo {
  */
 export function getCardExpirationInfo(
   card: Pick<Card, 'created_at' | 'expires_at' | 'is_active'>,
-  warningDaysThreshold: number = 7
+  warningDaysThreshold: number = 5
 ): CardExpirationInfo {
   const createdDate = card.created_at ? new Date(card.created_at) : new Date();
 

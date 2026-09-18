@@ -170,6 +170,14 @@ export interface AnalyticsEvent {
 
 export type LeadStatus = 'nuevo' | 'contactado' | 'propuesta' | 'ganado' | 'perdido';
 
+export interface LeadActivityNote {
+  id: string;
+  author_name: string;
+  author_role: string;
+  text: string;
+  created_at: string;
+}
+
 export interface WhatsAppLead {
   id: string;
   card_id: string;
@@ -182,6 +190,7 @@ export interface WhatsAppLead {
   interest_notes?: string | null;
   status?: LeadStatus;
   salesperson_name?: string | null;
+  activity_notes?: LeadActivityNote[];
   created_at: string;
   updated_at?: string;
 }

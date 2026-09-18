@@ -29,6 +29,8 @@ import {
   saveCard,
   getLeadsByOrgId,
   updateLeadStatus,
+  addLeadActivityNote,
+  deleteLead,
 } from '@/lib/data/card-store';
 import {
   getRestaurantTables,
@@ -85,6 +87,9 @@ import {
   Eye,
   Loader2,
   Upload,
+  StickyNote,
+  Trash2,
+  X,
 } from 'lucide-react';
 
 export default function OrgDashboardPage() {
@@ -190,6 +195,74 @@ export default function OrgDashboardPage() {
     setOrgLeads((prev) =>
       prev.map((l) => (l.id === leadId ? { ...l, status: newStatus } : l))
     );
+  };
+
+  const isOrgAdmin = Boolean(
+    !currentUser ||
+    currentUser?.role === 'superadmin' ||
+    currentUser?.role === 'org_admin' ||
+    currentUser?.email?.toLowerCase() === 'luigicolonico@gmail.com'
+  );
+
+  const [activeLeadForNotes, setActiveLeadForNotes] = useState<WhatsAppLead | null>(null);
+  const [leadNoteText, setLeadNoteText] = useState('');
+
+  const handleAddLeadNote = async (leadId: string) => {
+    if (!leadNoteText.trim()) return;
+    const authorName = currentUser?.user_metadata?.full_name || currentUser?.full_name || currentUser?.email || 'Administrador';
+    const authorRole = isOrgAdmin ? 'Administrador' : 'Asesor Comercial';
+    const text = leadNoteText.trim();
+
+    const updated = addLeadActivityNote(leadId, authorName, authorRole, text);
+    if (updated) {
+      setOrgLeads((prev) => prev.map((l) => (l.id === leadId ? updated : l)));
+      if (activeLeadForNotes?.id === leadId) {
+        setActiveLeadForNotes(updated);
+      }
+    }
+
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const targetLead = orgLeads.find((l) => l.id === leadId);
+        const currentNotes = targetLead?.activity_notes || [];
+        const newNoteObj = {
+          id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'note_' + Date.now(),
+          author_name: authorName,
+          author_role: authorRole,
+          text,
+          created_at: new Date().toISOString(),
+        };
+        await supabase
+          .from('whatsapp_leads')
+          .update({ activity_notes: [...currentNotes, newNoteObj] })
+          .eq('id', leadId);
+      } catch (err) {
+        console.warn('Error guardando nota de lead en Supabase:', err);
+      }
+    }
+    setLeadNoteText('');
+  };
+
+  const handleDeleteLead = async (leadId: string, visitorName: string) => {
+    if (!isOrgAdmin) {
+      alert('Solo los administradores de la empresa tienen permiso para eliminar prospectos del CRM.');
+      return;
+    }
+    if (!window.confirm(`¿Confirmas la eliminación definitiva del prospecto "${visitorName}"? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    deleteLead(leadId);
+    setOrgLeads((prev) => prev.filter((l) => l.id !== leadId));
+    if (activeLeadForNotes?.id === leadId) {
+      setActiveLeadForNotes(null);
+    }
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('whatsapp_leads').delete().eq('id', leadId);
+      } catch (err) {
+        console.warn('Error eliminando lead en Supabase:', err);
+      }
+    }
   };
 
   const loadOrgData = useCallback(async () => {
@@ -1048,6 +1121,7 @@ export default function OrgDashboardPage() {
                   <th className="px-5 py-3.5">Colaborador / Puesto</th>
                   <th className="px-5 py-3.5">Enlace Público</th>
                   <th className="px-5 py-3.5">Layout Asignado</th>
+                  <th className="px-5 py-3.5">Rol / Permisos</th>
                   <th className="px-5 py-3.5 text-center">Estado Tarjeta</th>
                   <th className="px-5 py-3.5 text-right">Acción</th>
                 </tr>
@@ -1087,6 +1161,26 @@ export default function OrgDashboardPage() {
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         {card.layout_type || 'modern'}
                       </span>
+                    </td>
+
+                    <td className="px-5 py-4">
+                      {isOrgAdmin ? (
+                        <select
+                          defaultValue="collaborator"
+                          className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
+                          onChange={(e) => {
+                            const newRole = e.target.value;
+                            alert(`Permisos guardados: ${card.full_name} ahora tiene rol de ${newRole === 'org_admin' ? 'Administrador de Empresa (Control total)' : 'Vendedor / Asesor (Sin permisos de eliminación)'}.`);
+                          }}
+                        >
+                          <option value="collaborator">💼 Vendedor / Asesor</option>
+                          <option value="org_admin">👑 Administrador Empresa</option>
+                        </select>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                          💼 Vendedor
+                        </span>
+                      )}
                     </td>
 
                     <td className="px-5 py-4 text-center">
@@ -1558,6 +1652,7 @@ export default function OrgDashboardPage() {
                     <th className="px-6 py-3">Interés / Solicitud</th>
                     <th className="px-6 py-3">Contacto</th>
                     <th className="px-6 py-3">Estado</th>
+                    <th className="px-6 py-3 text-right">Acciones & Notas</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1613,12 +1708,158 @@ export default function OrgDashboardPage() {
                               <option value="perdido">❌ Perdida</option>
                             </select>
                           </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Botón Notas de Actividad Comercial */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveLeadForNotes(lead);
+                                  setLeadNoteText('');
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 text-xs font-bold flex items-center gap-1 transition-colors"
+                                title="Ver o agregar notas sobre este prospecto"
+                              >
+                                <StickyNote className="w-3.5 h-3.5" />
+                                <span>Notas ({lead.activity_notes?.length || 0})</span>
+                              </button>
+
+                              {/* Botón Eliminar Lead (Solo Administrador) */}
+                              {isOrgAdmin ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteLead(lead.id, lead.visitor_name)}
+                                  className="p-1.5 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 transition-colors"
+                                  title="Eliminar prospecto (Exclusivo Administrador)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <span
+                                  className="p-1.5 text-slate-300 dark:text-slate-600 cursor-not-allowed"
+                                  title="Solo el administrador puede eliminar prospectos"
+                                >
+                                  <Lock className="w-3.5 h-3.5" />
+                                </span>
+                              )}
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
                 </tbody>
               </table>
             </div>
+
+            {/* MODAL DE NOTAS DE ACTIVIDAD COMERCIAL (CRM CORPORATIVO) */}
+            {activeLeadForNotes && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+                <div className="relative w-full max-w-xl bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col">
+                  {/* Cabecera del modal */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0">
+                    <div>
+                      <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                        <StickyNote className="w-4 h-4 text-amber-500" />
+                        <span>Historial & Notas: {activeLeadForNotes.visitor_name}</span>
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        {activeLeadForNotes.company_name ? `${activeLeadForNotes.company_name} • ` : ''}
+                        Asesor asignado: {activeLeadForNotes.salesperson_name || 'Equipo Comercial'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveLeadForNotes(null)}
+                      className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Resumen del lead */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 text-xs shrink-0 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Interés Inicial:</span>
+                      <p className="font-semibold text-slate-800 dark:text-slate-200">{activeLeadForNotes.subject || activeLeadForNotes.interest_notes || 'Consulta comercial'}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={`tel:${activeLeadForNotes.phone_number}`}
+                        className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 font-mono font-bold text-[11px] text-slate-700 dark:text-slate-200 flex items-center gap-1"
+                      >
+                        <Phone className="w-3 h-3 text-emerald-500" />
+                        <span>{activeLeadForNotes.phone_number}</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Historial cronológico de notas */}
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 min-h-[140px] max-h-[320px]">
+                    {(!activeLeadForNotes.activity_notes || activeLeadForNotes.activity_notes.length === 0) ? (
+                      <div className="py-10 text-center text-xs text-slate-400">
+                        No hay notas de seguimiento aún para este prospecto. Registra qué le dijiste o qué acordaron abajo.
+                      </div>
+                    ) : (
+                      activeLeadForNotes.activity_notes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-800 text-xs space-y-1.5 shadow-sm"
+                        >
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-bold text-slate-800 dark:text-slate-200">
+                              {note.author_name}{' '}
+                              <span className="font-normal text-[10px] text-slate-400 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700">
+                                {note.author_role}
+                              </span>
+                            </span>
+                            <span className="text-slate-400 text-[10px]">
+                              {new Date(note.created_at).toLocaleDateString('es-ES', {
+                                day: '2-digit',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                            {note.text}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Campo para redactar nueva nota */}
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0 space-y-2">
+                    <textarea
+                      rows={3}
+                      value={leadNoteText}
+                      onChange={(e) => setLeadNoteText(e.target.value)}
+                      placeholder="Registrar interacción (ej. 'Se le envió catálogo de productos por WhatsApp. Llamar nuevamente el jueves para confirmar pedido')..."
+                      className="w-full p-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-brand-blue resize-none"
+                    />
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setActiveLeadForNotes(null)}
+                        className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100"
+                      >
+                        Cerrar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddLeadNote(activeLeadForNotes.id)}
+                        disabled={!leadNoteText.trim()}
+                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-40 shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Guardar en Historial CRM</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </section>
 

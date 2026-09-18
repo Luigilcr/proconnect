@@ -365,9 +365,9 @@ export function getAnalyticsForCard(cardId: string): {
 } {
   const leads = getLeadsByCardId(cardId);
 
-  let views = 142;
-  let vcardDownloads = 38;
-  let linkClicks = 64;
+  let views = 0;
+  let vcardDownloads = 0;
+  let linkClicks = 0;
 
   if (typeof window !== 'undefined') {
     try {
@@ -436,6 +436,17 @@ export function getSystemMetrics(): SystemMetrics {
     0
   );
 
+  let totalViews = 0;
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(STORAGE_ANALYTICS_KEY);
+      if (raw) {
+        const events: AnalyticsEvent[] = JSON.parse(raw);
+        totalViews = events.filter((e) => e.event_type === 'view').length;
+      }
+    } catch {}
+  }
+
   return {
     totalUsers: users.length,
     totalOrganizations: orgs.length,
@@ -443,7 +454,7 @@ export function getSystemMetrics(): SystemMetrics {
     activeCards: cards.filter((c) => c.is_active).length,
     totalLinks,
     totalMultimedia,
-    totalViews: 1845,
+    totalViews,
     totalLeads: leads.length,
   };
 }
@@ -568,4 +579,59 @@ export function createNewOrganization(
   };
   saveOrganization(newOrg);
   return newOrg;
+}
+
+/**
+ * Elimina un lead (Exclusivo para Administrador de Empresa o Superadmin)
+ */
+export function deleteLead(leadId: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const leads = getStoredLeads();
+    const filtered = leads.filter((l) => l.id !== leadId);
+    if (filtered.length !== leads.length) {
+      localStorage.setItem(STORAGE_LEADS_KEY, JSON.stringify(filtered));
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Registra una nota de seguimiento o bitácora en un lead
+ */
+export function addLeadActivityNote(
+  leadId: string,
+  authorName: string,
+  authorRole: string,
+  text: string
+): WhatsAppLead | null {
+  if (typeof window === 'undefined' || !text.trim()) return null;
+  try {
+    const leads = getStoredLeads();
+    const idx = leads.findIndex((l) => l.id === leadId);
+    if (idx < 0) return null;
+
+    const lead = leads[idx];
+    const newNote = {
+      id: 'note_' + Date.now() + '_' + Math.random().toString(36).substring(7),
+      author_name: authorName,
+      author_role: authorRole,
+      text: text.trim(),
+      created_at: new Date().toISOString(),
+    };
+
+    const notes = Array.isArray(lead.activity_notes) ? [...lead.activity_notes] : [];
+    notes.unshift(newNote);
+
+    lead.activity_notes = notes;
+    lead.updated_at = new Date().toISOString();
+    leads[idx] = lead;
+    localStorage.setItem(STORAGE_LEADS_KEY, JSON.stringify(leads));
+    return lead;
+  } catch {
+    return null;
+  }
 }

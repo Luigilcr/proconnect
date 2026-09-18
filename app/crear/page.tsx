@@ -497,6 +497,7 @@ export default function CrearTarjetaPage() {
           include_photo: finalizedCard.include_photo ?? true,
           custom_vcf_notes: finalizedCard.custom_vcf_notes || '',
           is_active: finalizedCard.is_active ?? true,
+          expires_at: finalizedCard.expires_at || new Date(Date.now() + 30 * 86400000).toISOString(),
           updated_at: new Date().toISOString(),
         });
 
@@ -546,6 +547,9 @@ export default function CrearTarjetaPage() {
     setDraftRestored(false);
     setIsPublishing(false);
     setShowAuthModal(false);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('proconnect_active_card_id', finalizedCard.id);
+    }
     setStep(3);
 
     if (typeof window !== 'undefined') {

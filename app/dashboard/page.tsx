@@ -167,7 +167,10 @@ export default function DashboardPage() {
       setIsLoading(false);
 
       // 6. Asignar tarjeta activa
-      if (isSuperAdmin) {
+      const savedActiveId = typeof window !== 'undefined' ? localStorage.getItem('proconnect_active_card_id') : null;
+      if (savedActiveId && finalCards.some((c) => c.id === savedActiveId)) {
+        setActiveCardId(savedActiveId);
+      } else if (isSuperAdmin) {
         const luigiCard = finalCards.find((c) => c.slug === 'luigi-colonico');
         if (luigiCard) {
           setActiveCardId(luigiCard.id);
@@ -462,7 +465,12 @@ export default function DashboardPage() {
             {cards.length > 1 && (
               <select
                 value={activeCardId}
-                onChange={(e) => setActiveCardId(e.target.value)}
+                onChange={(e) => {
+                  setActiveCardId(e.target.value);
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('proconnect_active_card_id', e.target.value);
+                  }
+                }}
                 className="px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium"
               >
                 {cards.map((c) => (
@@ -495,20 +503,22 @@ export default function DashboardPage() {
               <span>Ver Perfil</span>
             </a>
 
-            {/* Botón Renovar (+30d) */}
-            <button
-              type="button"
-              onClick={() => handleRenewCurrentCard(30)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border ${
-                renewSuccess
-                  ? 'bg-emerald-500 text-white border-emerald-500'
-                  : 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 border-amber-200 dark:border-amber-800/60'
-              }`}
-              title="Extender suscripción por 30 días adicionales"
-            >
-              <CalendarPlus className="w-3.5 h-3.5" />
-              <span>{renewSuccess ? '¡Renovada +30d!' : 'Renovar +30d'}</span>
-            </button>
+            {/* Botón Renovar (+30d) - Exclusivo para Superadmin */}
+            {isSuperAdmin && (
+              <button
+                type="button"
+                onClick={() => handleRenewCurrentCard(30)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border ${
+                  renewSuccess
+                    ? 'bg-emerald-500 text-white border-emerald-500'
+                    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 border-amber-200 dark:border-amber-800/60'
+                }`}
+                title="Extender suscripción por 30 días adicionales (Superadmin)"
+              >
+                <CalendarPlus className="w-3.5 h-3.5" />
+                <span>{renewSuccess ? '¡Renovada +30d!' : 'Renovar +30d (Admin)'}</span>
+              </button>
+            )}
 
             {/* Botón Guardar Cambios */}
             <button
@@ -694,8 +704,8 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mt-6">
           {/* Columna Izquierda: Pestañas y Formularios de Edición (Col 7/12) */}
           <div className={`lg:col-span-7 ${showMobilePreview ? 'hidden lg:block' : 'block'}`}>
-            {/* Navegación por Pestañas */}
-            <div className="flex overflow-x-auto gap-2 pb-3 mb-6 border-b border-slate-200 dark:border-slate-800 scrollbar-none">
+            {/* Navegación por Pestañas (Totalmente accesible en PC con mouse y táctil) */}
+            <div className="flex flex-wrap gap-2 pb-3 mb-6 border-b border-slate-200 dark:border-slate-800">
               <button
                 onClick={() => setActiveTab('identity')}
                 className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${

@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { FullCard, WhatsAppLead, LeadStatus } from '@/lib/types';
-import { getAnalyticsForCard, getLeadsByCardId, updateLeadStatus } from '@/lib/data/card-store';
+import { getAnalyticsForCard, getLeadsByCardId, updateLeadStatus, addLeadActivityNote } from '@/lib/data/card-store';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import {
   Eye,
@@ -31,6 +31,9 @@ import {
   Search,
   UserPlus,
   Smartphone,
+  StickyNote,
+  X,
+  Plus,
 } from 'lucide-react';
 
 interface AnalyticsAndLeadsProps {
@@ -166,10 +169,35 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
     loadLeads();
   };
 
-  const handleSaveNotes = (leadId: string) => {
-    updateLeadStatus(leadId, leads.find((l) => l.id === leadId)?.status || 'nuevo', notesInput);
-    setEditingNotesId(null);
-    loadLeads();
+  const handleAddActivityNote = async (leadId: string) => {
+    if (!notesInput.trim()) return;
+    const authorName = card.full_name || 'Titular';
+    const authorRole = 'Contacto';
+    const text = notesInput.trim();
+    const updated = addLeadActivityNote(leadId, authorName, authorRole, text);
+    if (updated) {
+      setLeads((prev) => prev.map((l) => (l.id === leadId ? updated : l)));
+    }
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const targetLead = leads.find((l) => l.id === leadId);
+        const currentNotes = targetLead?.activity_notes || [];
+        const newNoteObj = {
+          id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'note_' + Date.now(),
+          author_name: authorName,
+          author_role: authorRole,
+          text,
+          created_at: new Date().toISOString(),
+        };
+        await supabase
+          .from('whatsapp_leads')
+          .update({ activity_notes: [...currentNotes, newNoteObj] })
+          .eq('id', leadId);
+      } catch (err) {
+        console.warn('Error sincronizando nota en Supabase:', err);
+      }
+    }
+    setNotesInput('');
   };
 
   // Métricas del embudo de ventas
@@ -449,8 +477,33 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
                       className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
                       title="Llamar por teléfono"
                     >
-                      <Phone className="w-4 h-4" />
+                      <Phone className="w-4 h-4 text-emerald-600" />
                     </a>
+
+                    {/* Botón Correo Electrónico si tiene email */}
+                    {lead.email && (
+                      <a
+                        href={`mailto:${lead.email}?subject=${encodeURIComponent(`Contacto ProConnect - ${card.full_name}`)}`}
+                        className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
+                        title={`Enviar email a ${lead.email}`}
+                      >
+                        <Mail className="w-4 h-4 text-sky-500" />
+                      </a>
+                    )}
+
+                    {/* Botón Notas de Contacto */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingNotesId(lead.id);
+                        setNotesInput('');
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      title="Ver o añadir notas privadas sobre este contacto"
+                    >
+                      <StickyNote className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Notas ({lead.activity_notes?.length || 0})</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -458,6 +511,98 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
           </div>
         )}
       </div>
+
+      {/* Modal de Notas Personales del Contacto */}
+      {editingNotesId && (() => {
+        const activeLead = leads.find((l) => l.id === editingNotesId);
+        if (!activeLead) return null;
+        const notes = activeLead.activity_notes || [];
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <StickyNote className="w-4 h-4 text-amber-500" />
+                    <span>Notas de Contacto: {activeLead.visitor_name}</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Historial de conversaciones y seguimiento comercial.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingNotesId(null)}
+                  className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Lista de notas existentes */}
+              <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 min-h-[120px] max-h-[300px]">
+                {notes.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-400">
+                    Aún no hay notas registradas para este contacto. Agrega la primera abajo.
+                  </div>
+                ) : (
+                  notes.map((n) => (
+                    <div
+                      key={n.id}
+                      className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 text-xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span className="font-bold text-slate-700 dark:text-slate-300">
+                          {n.author_name} ({n.author_role})
+                        </span>
+                        <span>
+                          {new Date(n.created_at).toLocaleDateString('es-ES', {
+                            day: '2-digit',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap">{n.text}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Formulario para agregar nueva nota */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0 space-y-2">
+                <textarea
+                  rows={3}
+                  value={notesInput}
+                  onChange={(e) => setNotesInput(e.target.value)}
+                  placeholder="Escribe lo conversado (ej. 'Llamé hoy, le interesa el plan corporativo de 5 tarjetas')..."
+                  className="w-full p-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-brand-blue resize-none"
+                />
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setEditingNotesId(null)}
+                    className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100"
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAddActivityNote(editingNotesId)}
+                    disabled={!notesInput.trim()}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-40"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Guardar Nota</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

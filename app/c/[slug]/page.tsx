@@ -11,7 +11,7 @@ import { FullCard } from '@/lib/types';
 import { getCardBySlug, getStoredOrganizations } from '@/lib/data/card-store';
 import { DigitalCard } from '@/components/card/DigitalCard';
 import { ContactExchangeModal } from '@/components/card/ContactExchangeModal';
-import { AlertCircle, ArrowLeft, Radio, ShieldAlert, UserCheck, Download } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Radio, ShieldAlert, UserCheck, Download, Clock } from 'lucide-react';
 import Link from 'next/link';
 import { downloadVCard } from '@/lib/vcard-generator';
 
@@ -139,6 +139,19 @@ export default function PublicCardProfilePage() {
     return org?.subscription_status === 'suspended';
   }, [card]);
 
+  // Verificar si la tarjeta ha expirado por fecha de corte de suscripción (30 días de prueba o fecha programada)
+  const isCardExpired = React.useMemo(() => {
+    if (!card) return false;
+    if (card.expires_at) {
+      return new Date(card.expires_at).getTime() < Date.now();
+    }
+    if (card.created_at) {
+      const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+      return new Date(card.created_at).getTime() + thirtyDaysMs < Date.now();
+    }
+    return false;
+  }, [card]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white p-4">
@@ -219,6 +232,39 @@ export default function PublicCardProfilePage() {
           <ArrowLeft className="w-4 h-4" />
           Ir a Inicio
         </Link>
+      </div>
+    );
+  }
+
+  // Si la tarjeta ha expirado por tiempo de suscripción
+  if (isCardExpired) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white p-6 text-center">
+        <div className="w-16 h-16 rounded-3xl bg-amber-500/10 text-amber-400 flex items-center justify-center mb-4 border border-amber-500/20 shadow-lg shadow-amber-500/10">
+          <Clock className="w-8 h-8 text-amber-400" />
+        </div>
+        <h1 className="text-xl font-bold mb-2">Tarjeta Fuera de Línea / Suscripción Expirada</h1>
+        <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
+          El periodo de suscripción activa para la tarjeta digital de <strong>{card.full_name}</strong> ha culminado. Si eres el titular de este perfil o chip NFC, contacta a la administración de ProConnect para renovar tu licencia de servicio.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <a
+            href={`https://wa.me/584141234567?text=${encodeURIComponent(
+              `Hola ProConnect, mi tarjeta digital (${card.full_name} - /c/${card.slug}) ha expirado y deseo renovar mi suscripción para reactivarla.`
+            )}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2"
+          >
+            Renovar por WhatsApp
+          </a>
+          <Link
+            href="/"
+            className="px-4 py-2.5 rounded-xl bg-slate-800 text-xs font-semibold text-white border border-slate-700 hover:bg-slate-700 transition-colors"
+          >
+            Ir a ProConnect
+          </Link>
+        </div>
       </div>
     );
   }

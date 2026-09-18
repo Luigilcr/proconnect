@@ -103,6 +103,57 @@ export async function POST(request: NextRequest) {
     inMemoryCards = cards;
     persistServerCards(cards);
 
+    // Sincronizar en Supabase si está disponible
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('cards').upsert({
+          id: card.id,
+          user_id: card.user_id,
+          organization_id: card.organization_id || null,
+          slug: card.slug,
+          full_name: card.full_name,
+          job_title: card.job_title,
+          company_name: card.company_name,
+          bio: card.bio,
+          profile_photo_url: card.profile_photo_url,
+          cover_photo_url: card.cover_photo_url,
+          logo_url: card.logo_url,
+          layout_type: card.layout_type || 'modern',
+          avatar_position: card.avatar_position || 'header_floating',
+          button_style: card.button_style || 'solid',
+          border_radius: card.border_radius || 'md',
+          primary_color: card.primary_color || '#0EA5E9',
+          secondary_color: card.secondary_color || '#0369A1',
+          accent_color: card.accent_color || '#38BDF8',
+          background_color: card.background_color || '#0F172A',
+          font_family: card.font_family || 'Inter',
+          font_weight: card.font_weight || 'medium',
+          include_photo: card.include_photo ?? true,
+          custom_vcf_notes: card.custom_vcf_notes || '',
+          is_active: card.is_active ?? true,
+          expires_at: card.expires_at || null,
+          updated_at: new Date().toISOString(),
+        });
+
+        if (Array.isArray(card.links) && card.links.length > 0) {
+          await supabase.from('card_links').delete().eq('card_id', card.id);
+          const linksToInsert = card.links.map((l, idx) => ({
+            id: l.id && l.id.includes('-') && l.id.length >= 32 ? l.id : crypto.randomUUID(),
+            card_id: card.id,
+            type: l.type || 'website',
+            label: l.label,
+            url: l.url,
+            icon_name: l.icon_name || null,
+            is_active: l.is_active ?? true,
+            position_order: idx + 1,
+          }));
+          await supabase.from('card_links').insert(linksToInsert);
+        }
+      } catch (sbErr) {
+        console.warn('Error sincronizando con Supabase en POST /api/cards:', sbErr);
+      }
+    }
+
     return NextResponse.json({ success: true, card });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err?.message || 'Error al guardar tarjeta' }, { status: 500 });

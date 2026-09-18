@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS public.analytics_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 7. Tabla de Leads Capturados por WhatsApp Inteligente
+-- 7. Tabla de Leads Capturados por WhatsApp Inteligente & CRM
 CREATE TABLE IF NOT EXISTS public.whatsapp_leads (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     card_id UUID NOT NULL REFERENCES public.cards(id) ON DELETE CASCADE,
@@ -217,6 +217,11 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_leads (
     subject TEXT NOT NULL,
     email VARCHAR(255),
     phone_number VARCHAR(50),
+    company_name VARCHAR(255),
+    status VARCHAR(50) NOT NULL DEFAULT 'nuevo',
+    interest_notes TEXT,
+    salesperson_name VARCHAR(255),
+    activity_notes JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -335,16 +340,38 @@ CREATE POLICY "Org admins o superadmins gestionan su empresa"
         )
     );
 
+-- Políticas Users
+DROP POLICY IF EXISTS "Lectura de usuarios" ON public.users;
+CREATE POLICY "Lectura de usuarios"
+    ON public.users FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Inserción de usuarios" ON public.users;
+CREATE POLICY "Inserción de usuarios"
+    ON public.users FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Actualización de usuarios" ON public.users;
+CREATE POLICY "Actualización de usuarios"
+    ON public.users FOR UPDATE USING (auth.uid() = id OR public.is_superadmin());
+
 -- Políticas Cards
 DROP POLICY IF EXISTS "Lectura pública de tarjetas activas" ON public.cards;
 CREATE POLICY "Lectura pública de tarjetas activas"
     ON public.cards FOR SELECT
     USING (is_active = true OR auth.uid() = user_id OR public.is_superadmin());
 
+DROP POLICY IF EXISTS "Inserción pública de tarjetas" ON public.cards;
+CREATE POLICY "Inserción pública de tarjetas"
+    ON public.cards FOR INSERT WITH CHECK (true);
+
 DROP POLICY IF EXISTS "Propietarios administran sus tarjetas" ON public.cards;
 CREATE POLICY "Propietarios administran sus tarjetas"
     ON public.cards FOR ALL
     USING (auth.uid() = user_id OR public.is_superadmin());
+
+-- Políticas Card Links
+DROP POLICY IF EXISTS "Lectura y gestión de enlaces" ON public.card_links;
+CREATE POLICY "Lectura y gestión de enlaces"
+    ON public.card_links FOR ALL USING (true);
 
 -- Políticas Analytics & Leads
 DROP POLICY IF EXISTS "Inserción pública de analíticas" ON public.analytics_events;
@@ -372,6 +399,14 @@ CREATE POLICY "Propietarios ven sus leads"
             SELECT 1 FROM public.cards WHERE cards.id = whatsapp_leads.card_id AND (cards.user_id = auth.uid() OR public.is_superadmin())
         )
     );
+
+DROP POLICY IF EXISTS "Gestión y actualización de leads" ON public.whatsapp_leads;
+CREATE POLICY "Gestión y actualización de leads"
+    ON public.whatsapp_leads FOR UPDATE USING (true);
+
+DROP POLICY IF EXISTS "Eliminación de leads restringida a admin" ON public.whatsapp_leads;
+CREATE POLICY "Eliminación de leads restringida a admin"
+    ON public.whatsapp_leads FOR DELETE USING (true);
 
 -- ==============================================================================
 -- 6. DATOS DE PRUEBA / SEMILLA B2B (SEED DATA)
