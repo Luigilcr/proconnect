@@ -89,14 +89,16 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       images: [
         {
           url: imageUrl,
-          width: 800,
-          height: 800,
+          secureUrl: imageUrl,
+          type: 'image/jpeg',
+          width: 600,
+          height: 600,
           alt: card.full_name,
         },
       ],
     },
     twitter: {
-      card: 'summary_large_image',
+      card: 'summary',
       title,
       description,
       images: [imageUrl],

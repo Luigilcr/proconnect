@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import sharp from 'sharp';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { getCardBySlug } from '@/lib/data/card-store';
 
@@ -39,6 +40,32 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Si es Base64 (procesar con sharp para dejarla en ~28KB garantizado para WhatsApp)
+  if (rawImg.startsWith('data:')) {
+    const commaIndex = rawImg.indexOf(',');
+    if (commaIndex > -1) {
+      try {
+        const base64Data = rawImg.substring(commaIndex + 1);
+        const rawBuffer = Buffer.from(base64Data, 'base64');
+        const compressed = await sharp(rawBuffer)
+          .resize(600, 600, { fit: 'cover' })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+
+        return new NextResponse(compressed, {
+          status: 200,
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Content-Length': String(compressed.length),
+            'Cache-Control': 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=43200',
+          },
+        });
+      } catch (sharpErr) {
+        console.warn('Error compressing with sharp:', sharpErr);
+      }
+    }
+  }
+
   // Si es URL externa o relativa ya servida por CDN
   if (rawImg.startsWith('http://') || rawImg.startsWith('https://')) {
     return NextResponse.redirect(rawImg);
@@ -46,24 +73,6 @@ export async function GET(request: NextRequest) {
 
   if (rawImg.startsWith('/')) {
     return NextResponse.redirect(`https://proconnect-pearl.vercel.app${rawImg}`);
-  }
-
-  // Si es Base64 (ej: fotos previas a la compresión en canvas)
-  if (rawImg.startsWith('data:')) {
-    const commaIndex = rawImg.indexOf(',');
-    if (commaIndex > -1) {
-      const mimeMatch = rawImg.substring(0, commaIndex).match(/data:([^;]+)/);
-      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-      const base64Data = rawImg.substring(commaIndex + 1);
-      const buffer = Buffer.from(base64Data, 'base64');
-      return new NextResponse(buffer, {
-        status: 200,
-        headers: {
-          'Content-Type': mimeType,
-          'Cache-Control': 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=43200',
-        },
-      });
-    }
   }
 
   return NextResponse.redirect(
