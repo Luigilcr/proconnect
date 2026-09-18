@@ -32,8 +32,18 @@ export default function PublicCardProfilePage() {
     return '';
   };
 
+  const getCachedCard = (slugStr: string): FullCard | null => {
+    if (!slugStr || typeof window === 'undefined') return null;
+    try {
+      const cached = sessionStorage.getItem(`proconnect_card_${slugStr}`) || localStorage.getItem(`proconnect_card_${slugStr}`);
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return getCardBySlug(slugStr);
+  };
+
   const initialSlug = resolveSlug();
-  const initialFound = initialSlug ? getCardBySlug(decodeURIComponent(initialSlug).toLowerCase().trim()) : null;
+  const decodedInitial = initialSlug ? decodeURIComponent(initialSlug).toLowerCase().trim() : '';
+  const initialFound = decodedInitial ? getCachedCard(decodedInitial) : null;
 
   const [card, setCard] = useState<FullCard | null>(initialFound);
   const [loading, setLoading] = useState<boolean>(!initialFound);
@@ -49,21 +59,11 @@ export default function PublicCardProfilePage() {
     const decoded = decodeURIComponent(activeSlug).toLowerCase().trim();
 
     const fetchCard = async () => {
-      // 1. Intentar consultar Supabase en tiempo real (Nube)
+      let foundCard: FullCard | null = null;
+
+      // 1. Consulta directa y rápida a Supabase en paralelo
       if (isSupabaseEnabled && supabase) {
         try {
-          // Intentar primero con la RPC segura
-          const { data: rpcCard, error: rpcErr } = await supabase.rpc('get_public_card', {
-            p_slug: decoded,
-          });
-
-          if (!rpcErr && rpcCard) {
-            setCard(rpcCard);
-            setLoading(false);
-            return;
-          }
-
-          // Consulta directa fallback a Supabase
           const { data: directCard, error: directErr } = await supabase
             .from('cards')
             .select('*, links:card_links(*)')
@@ -71,35 +71,60 @@ export default function PublicCardProfilePage() {
             .maybeSingle();
 
           if (!directErr && directCard) {
-            setCard(directCard);
-            setLoading(false);
-            return;
+            foundCard = directCard;
+          } else {
+            // Fallback a RPC segura si directCard es bloqueado por RLS anónimo
+            const { data: rpcCard } = await supabase.rpc('get_public_card', {
+              p_slug: decoded,
+            });
+            if (rpcCard) foundCard = rpcCard;
           }
         } catch (err) {
           console.warn('Error consultando Supabase en /c/[slug]:', err);
         }
       }
 
-      // 2. Intentar buscar en almacenamiento local (para preview o creador)
-      const localCard = getCardBySlug(decoded);
-      if (localCard) {
-        setCard(localCard);
-        setLoading(false);
-        return;
+      // 2. Si no respondió la nube, buscar en almacén local
+      if (!foundCard) {
+        foundCard = getCardBySlug(decoded);
       }
 
-      // 3. Fallback: Consultar API del servidor
-      try {
-        const res = await fetch(`/api/cards?slug=${encodeURIComponent(decoded)}`);
-        const data = await res.json();
-        if (data.success && data.card) {
-          setCard(data.card);
+      // 3. Fallback a API del servidor
+      if (!foundCard) {
+        try {
+          const res = await fetch(`/api/cards?slug=${encodeURIComponent(decoded)}`);
+          const data = await res.json();
+          if (data.success && data.card) {
+            foundCard = data.card;
+          }
+        } catch (err) {
+          console.error('Error al consultar tarjeta en servidor:', err);
         }
-      } catch (err) {
-        console.error('Error al consultar tarjeta en servidor:', err);
-      } finally {
-        setLoading(false);
       }
+
+      // 4. Procesar y guardar en caché instantáneo si se encontró
+      if (foundCard) {
+        // Deduplicación de seguridad
+        if (Array.isArray(foundCard.links)) {
+          const seen = new Set<string>();
+          foundCard.links = foundCard.links.filter((l: any) => {
+            const key = `${l.type}:${(l.url || '').trim().toLowerCase().replace(/\/$/, '')}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        }
+
+        setCard(foundCard);
+        try {
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem(`proconnect_card_${decoded}`, JSON.stringify(foundCard));
+            localStorage.setItem(`proconnect_card_${decoded}`, JSON.stringify(foundCard));
+          }
+        } catch {}
+      }
+
+      setLoading(false);
     };
 
     fetchCard();

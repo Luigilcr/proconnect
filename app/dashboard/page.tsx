@@ -38,6 +38,8 @@ import {
   LogOut,
   Plus,
   Sparkles,
+  Copy,
+  Wifi,
 } from 'lucide-react';
 import Link from 'next/link';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
@@ -56,6 +58,8 @@ export default function DashboardPage() {
   const [isSavingServer, setIsSavingServer] = useState(false);
   const [authUser, setAuthUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [copiedNfcUrl, setCopiedNfcUrl] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -227,8 +231,25 @@ export default function DashboardPage() {
   const handleManualSave = async () => {
     if (!currentCard) return;
     setIsSavingServer(true);
-    saveCard(currentCard);
-    clearDashboardDraft(currentCard.id);
+
+    // 0. Deduplicación estricta de enlaces antes de persistir
+    const seenLinks = new Set<string>();
+    const cleanedLinks = (currentCard.links || []).filter((l) => {
+      const key = `${l.type}:${(l.url || '').trim().toLowerCase()}`;
+      if (seenLinks.has(key)) return false;
+      seenLinks.add(key);
+      return true;
+    });
+
+    const cleanedCard: FullCard = {
+      ...currentCard,
+      links: cleanedLinks,
+      updated_at: new Date().toISOString(),
+    };
+
+    setCards((prev) => prev.map((c) => (c.id === cleanedCard.id ? cleanedCard : c)));
+    saveCard(cleanedCard);
+    clearDashboardDraft(cleanedCard.id);
     setDraftRestored(false);
 
     try {
@@ -236,31 +257,46 @@ export default function DashboardPage() {
       if (isSupabaseEnabled && supabase && authUser) {
         try {
           await supabase.from('cards').upsert({
-            id: currentCard.id,
-            user_id: currentCard.user_id || authUser.id,
-            slug: currentCard.slug,
-            full_name: currentCard.full_name,
-            job_title: currentCard.job_title,
-            company_name: currentCard.company_name,
-            bio: currentCard.bio,
-            profile_photo_url: currentCard.profile_photo_url,
-            cover_photo_url: currentCard.cover_photo_url,
-            logo_url: currentCard.logo_url,
-            layout_type: currentCard.layout_type || 'modern',
-            avatar_position: currentCard.avatar_position || 'header_floating',
-            button_style: currentCard.button_style || 'solid',
-            border_radius: currentCard.border_radius || 'md',
-            primary_color: currentCard.primary_color || '#0EA5E9',
-            secondary_color: currentCard.secondary_color || '#0369A1',
-            accent_color: currentCard.accent_color || '#38BDF8',
-            background_color: currentCard.background_color || '#0F172A',
-            font_family: currentCard.font_family || 'Inter',
-            font_weight: currentCard.font_weight || 'medium',
-            include_photo: currentCard.include_photo ?? true,
-            custom_vcf_notes: currentCard.custom_vcf_notes || '',
-            is_active: currentCard.is_active ?? true,
-            updated_at: new Date().toISOString(),
+            id: cleanedCard.id,
+            user_id: cleanedCard.user_id || authUser.id,
+            slug: cleanedCard.slug,
+            full_name: cleanedCard.full_name,
+            job_title: cleanedCard.job_title,
+            company_name: cleanedCard.company_name,
+            bio: cleanedCard.bio,
+            profile_photo_url: cleanedCard.profile_photo_url,
+            cover_photo_url: cleanedCard.cover_photo_url,
+            logo_url: cleanedCard.logo_url,
+            layout_type: cleanedCard.layout_type || 'modern',
+            avatar_position: cleanedCard.avatar_position || 'header_floating',
+            button_style: cleanedCard.button_style || 'solid',
+            border_radius: cleanedCard.border_radius || 'md',
+            primary_color: cleanedCard.primary_color || '#0EA5E9',
+            secondary_color: cleanedCard.secondary_color || '#0369A1',
+            accent_color: cleanedCard.accent_color || '#38BDF8',
+            background_color: cleanedCard.background_color || '#0F172A',
+            font_family: cleanedCard.font_family || 'Inter',
+            font_weight: cleanedCard.font_weight || 'medium',
+            include_photo: cleanedCard.include_photo ?? true,
+            custom_vcf_notes: cleanedCard.custom_vcf_notes || '',
+            is_active: cleanedCard.is_active ?? true,
+            updated_at: cleanedCard.updated_at,
           });
+
+          // Sincronizar card_links: borrar anteriores y reinsertar los vigentes limpios
+          await supabase.from('card_links').delete().eq('card_id', cleanedCard.id);
+
+          if (cleanedLinks.length > 0) {
+            const linksToInsert = cleanedLinks.map((l, idx) => ({
+              card_id: cleanedCard.id,
+              type: l.type,
+              label: l.label || l.type,
+              url: l.url,
+              position_order: idx,
+              is_active: l.is_active ?? true,
+            }));
+            await supabase.from('card_links').insert(linksToInsert);
+          }
         } catch (sbErr) {
           console.warn('Error guardando en Supabase:', sbErr);
         }
@@ -270,14 +306,16 @@ export default function DashboardPage() {
       await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card: currentCard }),
+        body: JSON.stringify({ card: cleanedCard }),
       });
     } catch (e) {
       console.warn('Error al guardar en el servidor:', e);
     } finally {
       setIsSavingServer(false);
       setIsSaved(true);
+      setToastMessage('✅ Cambios y enlaces guardados exitosamente en la nube');
       setTimeout(() => setIsSaved(false), 2500);
+      setTimeout(() => setToastMessage(null), 3500);
     }
   };
 
@@ -531,6 +569,82 @@ export default function DashboardPage() {
           return null;
         })()}
 
+        {/* Banner Enlace NFC Directo y Prominente */}
+        <div className="mt-4 p-5 rounded-3xl bg-gradient-to-r from-sky-500/10 via-indigo-500/10 to-purple-500/10 border border-sky-200 dark:border-sky-900/50 backdrop-blur-sm shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-sky-500/20 shrink-0">
+                <Wifi className="w-5 h-5 rotate-90" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black uppercase tracking-wider text-sky-600 dark:text-sky-400">
+                    Enlace Directo para Grabar Tarjeta NFC
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
+                    En Vivo
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
+                  Copia esta URL exacta y grábala en tu tarjeta física con la app <strong>NFC Tools</strong> (Tipo: URL / Enlace web).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `https://proconnect-pearl.vercel.app/c/${currentCard.slug}`;
+                  navigator.clipboard.writeText(url);
+                  setCopiedNfcUrl(true);
+                  setTimeout(() => setCopiedNfcUrl(false), 2500);
+                }}
+                className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-sm ${
+                  copiedNfcUrl
+                    ? 'bg-emerald-600 text-white shadow-emerald-500/20'
+                    : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sky-500/20 hover:scale-105 active:scale-95'
+                }`}
+              >
+                {copiedNfcUrl ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>¡Copiado al Portapapeles!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Copiar Enlace NFC</span>
+                  </>
+                )}
+              </button>
+
+              <a
+                href={`/c/${currentCard.slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Abrir Perfil</span>
+              </a>
+
+              <Link
+                href="/nfc"
+                className="px-3.5 py-2.5 rounded-xl border border-sky-300 dark:border-sky-800/60 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>NFC Studio 300 DPI</span>
+              </Link>
+            </div>
+          </div>
+
+          <div className="mt-3 pt-3 border-t border-sky-100 dark:border-sky-900/30 flex items-center justify-between gap-3 text-[11px] font-mono text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-950/40 px-3 py-2 rounded-xl">
+            <span className="truncate select-all">https://proconnect-pearl.vercel.app/c/{currentCard.slug}</span>
+            <span className="shrink-0 text-slate-400 font-sans text-[10px]">Carga instantánea (0ms caché)</span>
+          </div>
+        </div>
+
         {/* Barra de Estado: Autoguardado & Borrador */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs shadow-sm">
           <div className="flex items-center gap-2">
@@ -681,6 +795,14 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
+
+      {/* Alerta flotante Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl shadow-2xl border border-slate-800 dark:border-slate-200 text-xs font-bold animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <Check className="w-4 h-4 text-emerald-400 dark:text-emerald-600 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
       <Footer />
     </div>

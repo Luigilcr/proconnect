@@ -500,16 +500,30 @@ export default function CrearTarjetaPage() {
           updated_at: new Date().toISOString(),
         });
 
+        // 1. Borrar enlaces previos para evitar duplicados por reintentos
+        await supabase.from('card_links').delete().eq('card_id', finalizedCard.id);
+
+        // 2. Insertar enlaces deduplicados con identificadores únicos
         if (Array.isArray(finalizedCard.links) && finalizedCard.links.length > 0) {
-          const linksToInsert = finalizedCard.links.map((l, idx) => ({
+          const seen = new Set<string>();
+          const uniqueLinks = finalizedCard.links.filter((l) => {
+            const key = `${l.type}:${(l.url || '').trim().toLowerCase()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+
+          const linksToInsert = uniqueLinks.map((l, idx) => ({
+            id: l.id && l.id.includes('-') && l.id.length >= 32 ? l.id : crypto.randomUUID(),
             card_id: finalizedCard.id,
             type: l.type || 'website',
             label: l.label,
             url: l.url,
+            icon_name: l.icon_name || null,
             is_active: l.is_active ?? true,
             position_order: idx + 1,
           }));
-          await supabase.from('card_links').upsert(linksToInsert);
+          await supabase.from('card_links').insert(linksToInsert);
         }
       } catch (err) {
         console.warn('Error sincronizando tarjeta en Supabase:', err);

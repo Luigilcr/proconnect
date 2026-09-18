@@ -53,9 +53,17 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
       ? `${window.location.origin}/c/${card.slug}`
       : `https://proconnect.app/c/${card.slug}`;
 
-  // Enlaces activos
+  // Enlaces activos con deduplicación defensiva por tipo + URL
+  const seenLinkKeys = new Set<string>();
   const activeLinks = (card.links || [])
     .filter((l) => l.is_active)
+    .filter((l) => {
+      const normalizedUrl = (l.url || '').trim().toLowerCase().replace(/\/$/, '');
+      const key = `${l.type}:${normalizedUrl}`;
+      if (seenLinkKeys.has(key)) return false;
+      seenLinkKeys.add(key);
+      return true;
+    })
     .sort((a, b) => a.position_order - b.position_order);
 
   // Clic en enlace
