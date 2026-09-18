@@ -135,15 +135,19 @@ export default function SuperadminPage() {
   };
 
   const handleRenewCard = async (cardId: string, days: number = 30) => {
-    renewCardSubscription(cardId, days);
-    if (isSupabaseEnabled && supabase) {
-      const card = cards.find((c) => c.id === cardId);
-      if (card) {
-        const newExpiry = new Date(Date.now() + days * 86400000).toISOString();
-        await supabase.from('cards').update({ expires_at: newExpiry, is_active: true }).eq('id', cardId);
+    const updated = renewCardSubscription(cardId, days);
+    if (isSupabaseEnabled && supabase && updated) {
+      try {
+        await supabase.from('cards').update({
+          expires_at: updated.expires_at,
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        }).eq('id', cardId);
+      } catch (err) {
+        console.warn('Error renovando tarjeta en Supabase:', err);
       }
     }
-    loadData();
+    await loadData();
   };
 
   const handleDeleteCard = async (cardId: string) => {

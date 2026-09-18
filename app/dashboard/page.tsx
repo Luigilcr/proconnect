@@ -61,6 +61,7 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [copiedNfcUrl, setCopiedNfcUrl] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -75,6 +76,7 @@ export default function DashboardPage() {
             loggedUser = session.user;
             setAuthUser(session.user);
             isSuperAdmin = session.user.email?.toLowerCase() === 'luigicolonico@gmail.com';
+            setIsSuperAdmin(isSuperAdmin);
           } else {
             // Si Supabase está activo y no hay sesión, enviar al login
             window.location.href = '/login';
@@ -557,13 +559,25 @@ export default function DashboardPage() {
                     {exp.alertMessage}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleRenewCurrentCard(30)}
-                  className="px-3 py-1.5 rounded-xl bg-amber-500 text-white font-bold hover:bg-amber-600 transition-colors shrink-0"
-                >
-                  Renovar Ahora (+30 días)
-                </button>
+                {isSuperAdmin ? (
+                  <Link
+                    href="/admin"
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold transition-colors shrink-0 flex items-center gap-1.5"
+                  >
+                    <span>Gestionar Licencia (Admin)</span>
+                  </Link>
+                ) : (
+                  <a
+                    href={`https://wa.me/584141234567?text=${encodeURIComponent(
+                      `Hola ProConnect, mi tarjeta digital (${currentCard.full_name}) requiere renovación o extensión de días de servicio. Me gustaría coordinar el plan.`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors shrink-0 flex items-center gap-1.5 shadow-sm"
+                  >
+                    <span>Contactar Administrador para Renovar</span>
+                  </a>
+                )}
               </div>
             );
           }

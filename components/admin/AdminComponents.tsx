@@ -125,6 +125,28 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
     return true;
   });
 
+  const [cardToExtend, setCardToExtend] = React.useState<FullCard | null>(null);
+  const [selectedDays, setSelectedDays] = React.useState<number>(30);
+  const [customDays, setCustomDays] = React.useState<string>('');
+  const [planReason, setPlanReason] = React.useState<string>('Plan Mensual');
+  const [adminNote, setAdminNote] = React.useState<string>('');
+  const [isProcessingRenewal, setIsProcessingRenewal] = React.useState(false);
+
+  const handleConfirmExtension = async () => {
+    if (!cardToExtend || !onRenewCard) return;
+    const days = customDays ? parseInt(customDays, 10) || selectedDays : selectedDays;
+    if (days <= 0) return;
+
+    setIsProcessingRenewal(true);
+    await onRenewCard(cardToExtend.id, days);
+    setRenewSuccessId(cardToExtend.id);
+    setIsProcessingRenewal(false);
+    setCardToExtend(null);
+    setCustomDays('');
+    setAdminNote('');
+    setTimeout(() => setRenewSuccessId(null), 3500);
+  };
+
   const handleRenew = (cardId: string) => {
     if (onRenewCard) {
       onRenewCard(cardId, 30);
@@ -326,20 +348,25 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
 
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      {/* Botón Renovar (+30 días) */}
+                      {/* Botón Abrir Gestor de Días / Licencia */}
                       {onRenewCard && (
                         <button
                           type="button"
-                          onClick={() => handleRenew(card.id)}
+                          onClick={() => {
+                            setCardToExtend(card);
+                            setSelectedDays(30);
+                            setCustomDays('');
+                            setPlanReason('Plan Mensual (30 días)');
+                          }}
                           className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold transition-all text-xs border ${
                             isRenewedNow
                               ? 'bg-emerald-500 text-white border-emerald-500 scale-105'
-                              : 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 border-amber-200 dark:border-amber-800/60'
+                              : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 border-amber-300 dark:border-amber-800/60 shadow-sm'
                           }`}
-                          title="Renovar suscripción por +30 días"
+                          title="Gestionar y asignar días de servicio"
                         >
                           <CalendarPlus className="w-3.5 h-3.5" />
-                          <span>{isRenewedNow ? '¡Renovada!' : '+30d'}</span>
+                          <span>{isRenewedNow ? '¡Actualizado!' : 'Asignar Días'}</span>
                         </button>
                       )}
 
@@ -428,6 +455,179 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL DE GESTIÓN Y ASIGNACIÓN DE DÍAS DE SERVICIO (SUPERADMIN) */}
+      {cardToExtend && (() => {
+        const expInfo = getCardExpirationInfo(cardToExtend);
+        const days = customDays ? parseInt(customDays, 10) || 0 : selectedDays;
+
+        // Cálculo de proyección de nueva vigencia acumulada
+        const now = Date.now();
+        const currentExp = cardToExtend.expires_at ? new Date(cardToExtend.expires_at).getTime() : now;
+        const baseTime = currentExp > now ? currentExp : now;
+        const projectedDate = new Date(baseTime + days * 86400000);
+        const projectedStr = projectedDate.toLocaleDateString('es-ES', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric',
+        });
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+            <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
+              
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center border border-amber-500/20">
+                    <CalendarPlus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 dark:text-white">
+                      Asignar Días de Servicio & Licencia
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Módulo exclusivo de administración para activar o extender vigencias.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCardToExtend(null)}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Ficha de la tarjeta seleccionada */}
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-sm text-slate-900 dark:text-white">
+                    {cardToExtend.full_name}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    expInfo.status === 'expired'
+                      ? 'bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400'
+                      : expInfo.status === 'expiring_soon'
+                      ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
+                      : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
+                  }`}>
+                    {expInfo.badgeLabel}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                  <span>Slug: <strong className="font-mono text-sky-600 dark:text-sky-400">/c/{cardToExtend.slug}</strong></span>
+                  <span>Vence: <strong>{expInfo.formattedExpires}</strong></span>
+                </div>
+              </div>
+
+              {/* Planes predeterminados */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Selecciona el Tiempo a Añadir:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { days: 15, label: '+15 días', desc: 'Prueba Extra' },
+                    { days: 30, label: '+30 días', desc: '1 Mes' },
+                    { days: 60, label: '+60 días', desc: '2 Meses' },
+                    { days: 90, label: '+90 días', desc: 'Trimestre' },
+                    { days: 180, label: '+180 días', desc: 'Semestre' },
+                    { days: 365, label: '+365 días', desc: '1 Año Completo' },
+                  ].map((p) => {
+                    const isSelected = selectedDays === p.days && !customDays;
+                    return (
+                      <button
+                        key={p.days}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDays(p.days);
+                          setCustomDays('');
+                          setPlanReason(p.desc);
+                        }}
+                        className={`p-2.5 rounded-xl border text-left transition-all ${
+                          isSelected
+                            ? 'bg-sky-500 text-white border-sky-500 shadow-md shadow-sky-500/20'
+                            : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-sky-300'
+                        }`}
+                      >
+                        <p className="font-black text-xs">{p.label}</p>
+                        <p className={`text-[10px] ${isSelected ? 'text-sky-100' : 'text-slate-400'}`}>
+                          {p.desc}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Días Personalizados */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                  O escribe un número de días personalizado:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="1825"
+                    placeholder="Ej. 45 o 120"
+                    value={customDays}
+                    onChange={(e) => setCustomDays(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                  <span className="text-xs text-slate-500 font-medium shrink-0">días exactos</span>
+                </div>
+              </div>
+
+              {/* Motivo o Referencia Administrativa */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                  Motivo / Concepto Comercial:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej. Plan Anual pagado vía Pago Móvil / Transferencia Ref 4821"
+                  value={adminNote}
+                  onChange={(e) => setAdminNote(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              {/* Proyección del resultado */}
+              <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Nuevo Vencimiento Calculado:</span>
+                </div>
+                <strong className="font-bold text-sm">{projectedStr} (+{days} días)</strong>
+              </div>
+
+              {/* Botones de acción */}
+              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setCardToExtend(null)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={days <= 0 || isProcessingRenewal}
+                  onClick={handleConfirmExtension}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 disabled:opacity-50"
+                >
+                  <CalendarPlus className="w-4 h-4" />
+                  <span>{isProcessingRenewal ? 'Asignando...' : `Confirmar y Asignar +${days} Días`}</span>
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
