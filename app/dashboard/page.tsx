@@ -9,6 +9,7 @@ import React, { useState, useEffect } from 'react';
 import { FullCard, CardLink, CatalogMultimedia } from '@/lib/types';
 import { getStoredCards, saveCard, renewCardSubscription, persistCards } from '@/lib/data/card-store';
 import { saveDashboardDraft, loadDashboardDraft, clearDashboardDraft } from '@/lib/draft-store';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { IdentityEditor } from '@/components/dashboard/IdentityEditor';
 import { DesignCustomizer } from '@/components/dashboard/DesignCustomizer';
 import { LinksEditor } from '@/components/dashboard/LinksEditor';
@@ -34,6 +35,9 @@ import {
   CalendarPlus,
   Clock,
   AlertTriangle,
+  LogOut,
+  Plus,
+  Sparkles,
 } from 'lucide-react';
 import Link from 'next/link';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
@@ -50,14 +54,78 @@ export default function DashboardPage() {
   const [draftRestored, setDraftRestored] = useState(false);
   const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
   const [isSavingServer, setIsSavingServer] = useState(false);
+  const [authUser, setAuthUser] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const loadData = async () => {
-      let local = getStoredCards();
+      let loggedUser: any = null;
+      let isSuperAdmin = false;
 
-      // Verificar si hay borradores temporales no guardados de sesiones previas
+      // 1. Obtener usuario autenticado en Supabase
+      if (isSupabaseEnabled && supabase) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user) {
+            loggedUser = session.user;
+            setAuthUser(session.user);
+            isSuperAdmin = session.user.email?.toLowerCase() === 'luigicolonico@gmail.com';
+          } else {
+            // Si Supabase está activo y no hay sesión, enviar al login
+            window.location.href = '/login';
+            return;
+          }
+        } catch (err) {
+          console.warn('Error verificando sesión de usuario:', err);
+        }
+      }
+
+      // 2. Cargar tarjetas remotas desde Supabase si está disponible
+      let sbCards: FullCard[] = [];
+      if (isSupabaseEnabled && supabase && loggedUser) {
+        try {
+          let query = supabase.from('cards').select('*');
+          if (!isSuperAdmin) {
+            query = query.eq('user_id', loggedUser.id);
+          }
+          const { data: fetched, error } = await query;
+          if (!error && fetched && fetched.length > 0) {
+            const cardIds = fetched.map((c: any) => c.id);
+            let linksMap: Record<string, CardLink[]> = {};
+            if (cardIds.length > 0) {
+              const { data: linksData } = await supabase
+                .from('card_links')
+                .select('*')
+                .in('card_id', cardIds)
+                .order('position_order', { ascending: true });
+              if (linksData) {
+                linksData.forEach((l: any) => {
+                  if (!linksMap[l.card_id]) linksMap[l.card_id] = [];
+                  linksMap[l.card_id].push(l);
+                });
+              }
+            }
+            sbCards = fetched.map((c: any) => ({
+              ...c,
+              links: linksMap[c.id] || [],
+            }));
+          }
+        } catch (e) {
+          console.warn('Error obteniendo tarjetas de Supabase:', e);
+        }
+      }
+
+      // 3. Cargar tarjetas locales y filtrar por usuario
+      let local = getStoredCards();
+      const userLocal = isSuperAdmin
+        ? local
+        : loggedUser
+        ? local.filter((c) => c.user_id === loggedUser.id)
+        : local;
+
+      // 4. Integrar borradores locales pendientes
       let hasAnyDraft = false;
-      local = local.map((c) => {
+      const localWithDrafts = userLocal.map((c) => {
         const draft = loadDashboardDraft(c.id);
         if (draft && draft.card) {
           hasAnyDraft = true;
@@ -65,55 +133,42 @@ export default function DashboardPage() {
         }
         return c;
       });
-      if (hasAnyDraft) {
-        setDraftRestored(true);
-      }
-      setCards(local);
+      if (hasAnyDraft) setDraftRestored(true);
 
-      // Priorizar la tarjeta de Luigi o la primera disponible
-      const luigiCard = local.find((c) => c.slug === 'luigi-colonico');
-      if (luigiCard) {
-        setActiveCardId(luigiCard.id);
-      } else if (local.length > 0) {
-        setActiveCardId(local[0].id);
-      }
-
-      // Sincronizar con el servidor en la nube sin pisar cambios locales más recientes
-      try {
-        const res = await fetch('/api/cards');
-        const data = await res.json();
-        if (data.success && Array.isArray(data.cards)) {
-          const map = new Map<string, FullCard>();
-          // Base del servidor
-          data.cards.forEach((c: FullCard) => {
-            if (c && c.slug) map.set(c.slug.toLowerCase().trim(), c);
-          });
-          // Proteger borradores locales y ediciones recientes
-          local.forEach((c) => {
-            const key = c.slug.toLowerCase().trim();
-            const serverVersion = map.get(key);
-            const hasLocalDraft = !!loadDashboardDraft(c.id);
-            if (hasLocalDraft || !serverVersion) {
-              map.set(key, c);
-            } else {
-              const localTime = c.updated_at ? new Date(c.updated_at).getTime() : 0;
-              const serverTime = serverVersion.updated_at ? new Date(serverVersion.updated_at).getTime() : 0;
-              if (localTime >= serverTime) {
-                map.set(key, c);
-              }
+      // 5. Unificar tarjetas de Supabase y locales
+      const map = new Map<string, FullCard>();
+      sbCards.forEach((c) => {
+        if (c?.id) map.set(c.id, c);
+      });
+      localWithDrafts.forEach((c) => {
+        if (c?.id) {
+          const existing = map.get(c.id);
+          if (existing) {
+            const localTime = c.updated_at ? new Date(c.updated_at).getTime() : 0;
+            const serverTime = existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
+            if (localTime >= serverTime) {
+              map.set(c.id, c);
             }
-          });
-          const merged = Array.from(map.values());
-          setCards(merged);
-          persistCards(merged);
-
-          const luigiOnline = merged.find((c) => c.slug === 'luigi-colonico');
-          if (luigiOnline) {
-            setActiveCardId(luigiOnline.id);
+          } else {
+            map.set(c.id, c);
           }
         }
-      } catch (e) {
-        console.warn('Error sincronizando tarjetas en dashboard:', e);
+      });
+
+      const finalCards = Array.from(map.values());
+      setCards(finalCards);
+      setIsLoading(false);
+
+      // 6. Asignar tarjeta activa
+      if (isSuperAdmin) {
+        const luigiCard = finalCards.find((c) => c.slug === 'luigi-colonico');
+        if (luigiCard) {
+          setActiveCardId(luigiCard.id);
+        } else if (finalCards.length > 0) {
+          setActiveCardId(finalCards[0].id);
+        }
+      } else if (finalCards.length > 0) {
+        setActiveCardId(finalCards[0].id);
       }
     };
 
@@ -162,6 +217,13 @@ export default function DashboardPage() {
     setLastAutoSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   };
 
+  const handleLogout = async () => {
+    if (isSupabaseEnabled && supabase) {
+      await supabase.auth.signOut();
+    }
+    window.location.href = '/login';
+  };
+
   const handleManualSave = async () => {
     if (!currentCard) return;
     setIsSavingServer(true);
@@ -170,6 +232,41 @@ export default function DashboardPage() {
     setDraftRestored(false);
 
     try {
+      // 1. Sincronizar en Supabase si está activo
+      if (isSupabaseEnabled && supabase && authUser) {
+        try {
+          await supabase.from('cards').upsert({
+            id: currentCard.id,
+            user_id: currentCard.user_id || authUser.id,
+            slug: currentCard.slug,
+            full_name: currentCard.full_name,
+            job_title: currentCard.job_title,
+            company_name: currentCard.company_name,
+            bio: currentCard.bio,
+            profile_photo_url: currentCard.profile_photo_url,
+            cover_photo_url: currentCard.cover_photo_url,
+            logo_url: currentCard.logo_url,
+            layout_type: currentCard.layout_type || 'modern',
+            avatar_position: currentCard.avatar_position || 'header_floating',
+            button_style: currentCard.button_style || 'solid',
+            border_radius: currentCard.border_radius || 'md',
+            primary_color: currentCard.primary_color || '#0EA5E9',
+            secondary_color: currentCard.secondary_color || '#0369A1',
+            accent_color: currentCard.accent_color || '#38BDF8',
+            background_color: currentCard.background_color || '#0F172A',
+            font_family: currentCard.font_family || 'Inter',
+            font_weight: currentCard.font_weight || 'medium',
+            include_photo: currentCard.include_photo ?? true,
+            custom_vcf_notes: currentCard.custom_vcf_notes || '',
+            is_active: currentCard.is_active ?? true,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (sbErr) {
+          console.warn('Error guardando en Supabase:', sbErr);
+        }
+      }
+
+      // 2. Sincronizar con API local/servidor
       await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -205,8 +302,46 @@ export default function DashboardPage() {
 
   if (!currentCard) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
-        <p className="text-sm font-semibold text-slate-500">Cargando panel de control...</p>
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+        <Navbar />
+        <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-20 flex flex-col items-center justify-center text-center">
+          {isLoading ? (
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-8 h-8 border-4 border-sky-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-sm font-semibold text-slate-500">Cargando panel de control...</p>
+            </div>
+          ) : (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 sm:p-12 shadow-sm max-w-md w-full flex flex-col items-center">
+              <div className="w-16 h-16 rounded-2xl bg-sky-500/10 text-sky-500 flex items-center justify-center mb-4">
+                <Sparkles className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-black text-slate-900 dark:text-white mb-2">
+                ¡Aún no tienes tarjetas!
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+                Crea tu primera tarjeta de presentación digital con NFC y código QR para comenzar a compartir tus datos.
+              </p>
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+                <Link
+                  href="/crear"
+                  className="w-full sm:w-auto flex-1 py-3 px-5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow-md shadow-sky-600/20 flex items-center justify-center gap-2 transition-all hover:scale-105"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Crear Mi Tarjeta</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="w-full sm:w-auto py-3 px-4 rounded-xl border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 font-bold text-xs hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Cerrar Sesión</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </main>
+        <Footer />
       </div>
     );
   }
@@ -351,6 +486,17 @@ export default function DashboardPage() {
                   <span>Guardar</span>
                 </>
               )}
+            </button>
+
+            {/* Botón Cerrar Sesión */}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-3.5 py-2 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 text-xs font-bold flex items-center gap-1.5 transition-colors"
+              title="Cerrar sesión de usuario"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Cerrar Sesión</span>
             </button>
           </div>
         </div>

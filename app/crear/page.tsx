@@ -93,6 +93,12 @@ export default function CrearTarjetaPage() {
   const [isPublishing, setIsPublishing] = useState(false);
 
   const [copied, setCopied] = useState(false);
+  const [stableCardId] = useState<string>(() => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return 'c0000000-0000-4000-8000-' + Date.now().toString(16).padStart(12, '0').slice(-12);
+  });
 
   // Obtener plantilla activa
   const activeTemplate: PresetTemplate =
@@ -104,8 +110,8 @@ export default function CrearTarjetaPage() {
     ? `${window.location.origin}/c/${slug}`
     : `https://proconnect.app/c/${slug}`;
 
-  // Construir objeto FullCard en memoria para el simulador
-  const uniqueCardId = slug === 'luigi-colonico' ? 'draft-card-id' : `c_${slug || 'card'}_${Date.now()}`;
+  // Construir objeto FullCard en memoria para el simulador con UUID válido
+  const uniqueCardId = slug === 'luigi-colonico' ? 'c0000000-0000-0000-0000-000000000099' : stableCardId;
   const previewCard: FullCard = {
     id: uniqueCardId,
     user_id: 'user-created',
@@ -457,7 +463,60 @@ export default function CrearTarjetaPage() {
     // 1. Guardar en store local
     saveCard(finalizedCard);
 
-    // 2. Sincronizar en Supabase / API
+    // 2. Sincronizar en Supabase si está disponible
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('users').upsert({
+          id: user.id,
+          email: user.email || '',
+          full_name: finalizedCard.full_name,
+          role: user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? 'superadmin' : 'client',
+        });
+
+        await supabase.from('cards').upsert({
+          id: finalizedCard.id,
+          user_id: user.id,
+          slug: finalizedCard.slug,
+          full_name: finalizedCard.full_name,
+          job_title: finalizedCard.job_title,
+          company_name: finalizedCard.company_name,
+          bio: finalizedCard.bio,
+          profile_photo_url: finalizedCard.profile_photo_url,
+          cover_photo_url: finalizedCard.cover_photo_url,
+          logo_url: finalizedCard.logo_url,
+          layout_type: finalizedCard.layout_type || 'modern',
+          avatar_position: finalizedCard.avatar_position || 'header_floating',
+          button_style: finalizedCard.button_style || 'solid',
+          border_radius: finalizedCard.border_radius || 'md',
+          primary_color: finalizedCard.primary_color || '#0EA5E9',
+          secondary_color: finalizedCard.secondary_color || '#0369A1',
+          accent_color: finalizedCard.accent_color || '#38BDF8',
+          background_color: finalizedCard.background_color || '#0F172A',
+          font_family: finalizedCard.font_family || 'Inter',
+          font_weight: finalizedCard.font_weight || 'medium',
+          include_photo: finalizedCard.include_photo ?? true,
+          custom_vcf_notes: finalizedCard.custom_vcf_notes || '',
+          is_active: finalizedCard.is_active ?? true,
+          updated_at: new Date().toISOString(),
+        });
+
+        if (Array.isArray(finalizedCard.links) && finalizedCard.links.length > 0) {
+          const linksToInsert = finalizedCard.links.map((l, idx) => ({
+            card_id: finalizedCard.id,
+            type: l.type || 'website',
+            label: l.label,
+            url: l.url,
+            is_active: l.is_active ?? true,
+            position_order: idx + 1,
+          }));
+          await supabase.from('card_links').upsert(linksToInsert);
+        }
+      } catch (err) {
+        console.warn('Error sincronizando tarjeta en Supabase:', err);
+      }
+    }
+
+    // 3. Sincronizar en API local
     try {
       await fetch('/api/cards', {
         method: 'POST',
@@ -468,7 +527,7 @@ export default function CrearTarjetaPage() {
       console.warn('Error al sincronizar tarjeta con el servidor:', e);
     }
 
-    // 3. Limpiar borrador temporal ya que la tarjeta fue publicada exitosamente
+    // 4. Limpiar borrador temporal ya que la tarjeta fue publicada exitosamente
     clearCardDraft();
     setDraftRestored(false);
     setIsPublishing(false);

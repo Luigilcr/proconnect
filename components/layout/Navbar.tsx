@@ -5,13 +5,35 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { LayoutDashboard, Shield, Building2, ExternalLink, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Shield, Building2, ExternalLink, Menu, X, LogOut, User as UserIcon } from 'lucide-react';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 
 export const Navbar: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    if (isSupabaseEnabled && supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        setUser(session?.user || null);
+      });
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user || null);
+      });
+      return () => subscription.unsubscribe();
+    }
+  }, []);
+
+  const handleLogout = async () => {
+    if (isSupabaseEnabled && supabase) {
+      await supabase.auth.signOut();
+    }
+    setUser(null);
+    window.location.href = '/login';
+  };
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-brand-blue/10 bg-white/90 dark:bg-brand-dark/90 backdrop-blur-md shadow-sm">
@@ -67,13 +89,36 @@ export const Navbar: React.FC = () => {
             <span>1 Mes Gratis</span>
           </Link>
 
-          <Link
-            href="/login"
-            className="btn-brand text-xs px-4 sm:px-5 py-2.5 rounded-xl flex items-center gap-2 shadow-md shadow-brand-blue/20"
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span>Acceso al Portal</span>
-          </Link>
+          {user ? (
+            <div className="flex items-center gap-2">
+              <Link
+                href={user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? '/admin' : '/dashboard'}
+                className="btn-brand text-xs px-3.5 sm:px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-md shadow-brand-blue/20"
+                title={`Conectado como ${user.email}`}
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span className="max-w-[120px] truncate">{user.email?.split('@')[0]}</span>
+              </Link>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors flex items-center gap-1.5 text-xs font-bold shadow-sm"
+                title="Cerrar sesión"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Cerrar Sesión</span>
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              className="btn-brand text-xs px-4 sm:px-5 py-2.5 rounded-xl flex items-center gap-2 shadow-md shadow-brand-blue/20"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Acceso al Portal</span>
+            </Link>
+          )}
 
           {/* Mobile menu toggle */}
           <button
@@ -91,9 +136,9 @@ export const Navbar: React.FC = () => {
         <div className="md:hidden border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-brand-dark px-4 py-3 space-y-1">
           {[
             { href: '/#features', label: 'Características', icon: '✨' },
+            { href: '/nfc-studio', label: 'Tarjetas Físicas NFC', icon: '💳' },
             { href: '/r/brasa-criolla?mesa=1', label: 'Demo Restaurante (Gastro)', icon: '🍽️' },
             { href: '/c/carlos-fibraconnect', label: 'Demo Asesor FibraConnect (B2B)', icon: '💼' },
-            { href: '/login', label: 'Ingresar a mi Cuenta', icon: '🔐' },
           ].map(({ href, label, icon }) => (
             <Link
               key={href}
@@ -104,6 +149,35 @@ export const Navbar: React.FC = () => {
               <span>{icon}</span><span>{label}</span>
             </Link>
           ))}
+
+          {user ? (
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
+              <Link
+                href={user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? '/admin' : '/dashboard'}
+                className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 transition-colors"
+                onClick={() => setMobileOpen(false)}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span>Ir a mi Panel ({user.email})</span>
+              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors text-left"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Cerrar Sesión</span>
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              onClick={() => setMobileOpen(false)}
+            >
+              <span>🔐</span><span>Ingresar a mi Cuenta</span>
+            </Link>
+          )}
         </div>
       )}
     </header>
