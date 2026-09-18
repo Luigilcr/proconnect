@@ -48,6 +48,7 @@ import {
 } from '@/lib/data/restaurant-store';
 import { BRASA_CRIOLLA_ORG_ID } from '@/lib/data/demo-data';
 import { extractPaletteFromImage } from '@/lib/color-extractor';
+import { compressImage } from '@/lib/image-compressor';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { QRCodeSVG } from 'qrcode.react';
@@ -410,8 +411,9 @@ export default function OrgDashboardPage() {
 
     setUploadingLogo(true);
     try {
+      const optimized = await compressImage(file, { maxWidth: 500, maxHeight: 500, quality: 0.85 });
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', optimized);
       const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData,

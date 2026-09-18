@@ -22,6 +22,7 @@ import { FullCard, PresetTemplate } from '@/lib/types';
 import { saveCardDraft, loadCardDraft, clearCardDraft } from '@/lib/draft-store';
 import { AuthModal } from '@/components/auth/AuthModal';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+import { compressImage } from '@/lib/image-compressor';
 import {
   Sparkles,
   ArrowRight,
@@ -244,11 +245,12 @@ export default function CrearTarjetaPage() {
     if (!file) return;
 
     setIsUploadingCover(true);
-    setUploadCoverMessage('Subiendo portada...');
+    setUploadCoverMessage('Optimizando y subiendo portada...');
 
     try {
+      const optimizedFile = await compressImage(file, { maxWidth: 1200, maxHeight: 600, quality: 0.82 });
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', optimizedFile);
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (data.success && data.url) {
@@ -276,11 +278,12 @@ export default function CrearTarjetaPage() {
     if (!file) return;
 
     setIsUploadingLogo(true);
-    setUploadLogoMessage('Subiendo logo...');
+    setUploadLogoMessage('Optimizando y subiendo logo...');
 
     try {
+      const optimizedFile = await compressImage(file, { maxWidth: 500, maxHeight: 500, quality: 0.85 });
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', optimizedFile);
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (data.success && data.url) {
@@ -316,11 +319,12 @@ export default function CrearTarjetaPage() {
     if (!file) return;
 
     setIsUploading(true);
-    setUploadMessage('Subiendo y procesando imagen...');
+    setUploadMessage('Optimizando y procesando foto...');
 
     try {
+      const optimizedFile = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.85 });
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', optimizedFile);
 
       const res = await fetch('/api/upload', {
         method: 'POST',
@@ -330,7 +334,7 @@ export default function CrearTarjetaPage() {
       const data = await res.json();
       if (data.success && data.url) {
         setAvatarUrl(data.url);
-        setUploadMessage('¡Foto subida con éxito!');
+        setUploadMessage('¡Foto optimizada y lista!');
       } else {
         throw new Error(data.error || 'Error en subida');
       }

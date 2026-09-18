@@ -8,7 +8,8 @@
 import React from 'react';
 import { FullCard } from '@/lib/types';
 import { isBrandLockedForCard } from '@/lib/data/card-store';
-import { User, Camera, Briefcase, Building2, AlignLeft, Image as ImageIcon, Link2, Lock, Shield } from 'lucide-react';
+import { User, Camera, Briefcase, Building2, AlignLeft, Image as ImageIcon, Link2, Lock, Shield, Upload } from 'lucide-react';
+import { compressImage } from '@/lib/image-compressor';
 
 interface IdentityEditorProps {
   card: FullCard;
@@ -16,56 +17,54 @@ interface IdentityEditorProps {
 }
 
 export const IdentityEditor: React.FC<IdentityEditorProps> = ({ card, onChange }) => {
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    try {
+      const optimized = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.85 });
+      const formData = new FormData();
+      formData.append('file', optimized);
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.success && data.url) {
+        onChange({ profile_photo_url: data.url });
+        return;
+      }
+    } catch (err) {
+      console.warn('Error subiendo foto al servidor:', err);
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
-      if (!dataUrl) return;
+      if (dataUrl) onChange({ profile_photo_url: dataUrl });
+    };
+    reader.readAsDataURL(file);
+  };
 
-      try {
-        const img = new Image();
-        img.onload = () => {
-          try {
-            const canvas = document.createElement('canvas');
-            const MAX_SIZE = 500;
-            let width = img.width;
-            let height = img.height;
+  const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-            if (width > height) {
-              if (width > MAX_SIZE) {
-                height = Math.round((height * MAX_SIZE) / width);
-                width = MAX_SIZE;
-              }
-            } else {
-              if (height > MAX_SIZE) {
-                width = Math.round((width * MAX_SIZE) / height);
-                height = MAX_SIZE;
-              }
-            }
-
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(img, 0, 0, width, height);
-              onChange({ profile_photo_url: canvas.toDataURL('image/jpeg', 0.85) });
-              return;
-            }
-          } catch (err) {
-            console.error(err);
-          }
-          onChange({ profile_photo_url: dataUrl });
-        };
-        img.onerror = () => {
-          onChange({ profile_photo_url: dataUrl });
-        };
-        img.src = dataUrl;
-      } catch {
-        onChange({ profile_photo_url: dataUrl });
+    try {
+      const optimized = await compressImage(file, { maxWidth: 1200, maxHeight: 600, quality: 0.82 });
+      const formData = new FormData();
+      formData.append('file', optimized);
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.success && data.url) {
+        onChange({ cover_photo_url: data.url });
+        return;
       }
+    } catch (err) {
+      console.warn('Error subiendo portada al servidor:', err);
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) onChange({ cover_photo_url: dataUrl });
     };
     reader.readAsDataURL(file);
   };
@@ -262,13 +261,30 @@ export const IdentityEditor: React.FC<IdentityEditorProps> = ({ card, onChange }
                 </div>
               )}
             </div>
-            <input
-              type="url"
-              value={card.cover_photo_url || ''}
-              onChange={(e) => onChange({ cover_photo_url: e.target.value })}
-              placeholder="https://ejemplo.com/portada.jpg"
-              className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:ring-2 focus:ring-sky-500"
-            />
+            <div className="flex-1 flex gap-2">
+              <input
+                type="url"
+                value={card.cover_photo_url || ''}
+                onChange={(e) => onChange({ cover_photo_url: e.target.value })}
+                placeholder="https://ejemplo.com/portada.jpg"
+                className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+              <label
+                htmlFor="dashboard-cover-upload"
+                className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                title="Subir y optimizar imagen de portada"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Subir Portada</span>
+              </label>
+              <input
+                type="file"
+                id="dashboard-cover-upload"
+                accept="image/*"
+                className="hidden"
+                onChange={handleCoverUpload}
+              />
+            </div>
           </div>
         </div>
 
