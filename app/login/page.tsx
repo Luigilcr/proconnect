@@ -31,10 +31,16 @@ function LoginForm() {
   useEffect(() => {
     if (isSupabaseEnabled && supabase) {
       supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) router.push(redirectTo);
+        if (session?.user) {
+          if (session.user.email?.toLowerCase() === 'luigicolonico@gmail.com') {
+            window.location.href = '/admin';
+          } else {
+            window.location.href = redirectTo;
+          }
+        }
       });
     }
-  }, [router, redirectTo]);
+  }, [redirectTo]);
 
   // ──────────────────────────────────────────
   // HANDLERS MODO DEMO (sin Supabase)
@@ -79,19 +85,24 @@ function LoginForm() {
         // Obtener rol para redirigir apropiadamente
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const { data: profile } = await supabase
-            .from('users')
-            .select('role')
-            .eq('id', user.id)
-            .single();
-
-          const role = profile?.role ?? 'client';
-          if (role === 'superadmin') {
-            router.push('/admin');
-          } else if (role === 'org_admin') {
-            router.push('/org-dashboard');
+          let role = 'client';
+          if (user.email?.toLowerCase() === 'luigicolonico@gmail.com') {
+            role = 'superadmin';
           } else {
-            router.push(redirectTo);
+            const { data: profile } = await supabase
+              .from('users')
+              .select('role')
+              .eq('id', user.id)
+              .single();
+            role = profile?.role ?? 'client';
+          }
+
+          if (role === 'superadmin') {
+            window.location.href = '/admin';
+          } else if (role === 'org_admin') {
+            window.location.href = '/org-dashboard';
+          } else {
+            window.location.href = redirectTo;
           }
         }
       } else {

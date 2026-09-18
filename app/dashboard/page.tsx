@@ -7,7 +7,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { FullCard, CardLink, CatalogMultimedia } from '@/lib/types';
-import { getStoredCards, saveCard } from '@/lib/data/card-store';
+import { getStoredCards, saveCard, renewCardSubscription, persistCards } from '@/lib/data/card-store';
+import { saveDashboardDraft, loadDashboardDraft, clearDashboardDraft } from '@/lib/draft-store';
 import { IdentityEditor } from '@/components/dashboard/IdentityEditor';
 import { DesignCustomizer } from '@/components/dashboard/DesignCustomizer';
 import { LinksEditor } from '@/components/dashboard/LinksEditor';
@@ -29,8 +30,13 @@ import {
   Smartphone,
   TrendingUp,
   Building2,
+  Calendar,
+  CalendarPlus,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
 import Link from 'next/link';
+import { getCardExpirationInfo } from '@/lib/card-lifecycle';
 
 export default function DashboardPage() {
   const [cards, setCards] = useState<FullCard[]>([]);
@@ -39,48 +45,162 @@ export default function DashboardPage() {
     'identity' | 'design' | 'links' | 'multimedia' | 'vcard' | 'analytics'
   >('identity');
   const [isSaved, setIsSaved] = useState(false);
+  const [renewSuccess, setRenewSuccess] = useState(false);
   const [showMobilePreview, setShowMobilePreview] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
+  const [isSavingServer, setIsSavingServer] = useState(false);
 
   useEffect(() => {
-    const loadedCards = getStoredCards();
-    setCards(loadedCards);
-    if (loadedCards.length > 0) {
-      setActiveCardId(loadedCards[0].id);
-    }
+    const loadData = async () => {
+      let local = getStoredCards();
+
+      // Verificar si hay borradores temporales no guardados de sesiones previas
+      let hasAnyDraft = false;
+      local = local.map((c) => {
+        const draft = loadDashboardDraft(c.id);
+        if (draft && draft.card) {
+          hasAnyDraft = true;
+          return { ...c, ...draft.card };
+        }
+        return c;
+      });
+      if (hasAnyDraft) {
+        setDraftRestored(true);
+      }
+      setCards(local);
+
+      // Priorizar la tarjeta de Luigi o la primera disponible
+      const luigiCard = local.find((c) => c.slug === 'luigi-colonico');
+      if (luigiCard) {
+        setActiveCardId(luigiCard.id);
+      } else if (local.length > 0) {
+        setActiveCardId(local[0].id);
+      }
+
+      // Sincronizar con el servidor en la nube sin pisar cambios locales más recientes
+      try {
+        const res = await fetch('/api/cards');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.cards)) {
+          const map = new Map<string, FullCard>();
+          // Base del servidor
+          data.cards.forEach((c: FullCard) => {
+            if (c && c.slug) map.set(c.slug.toLowerCase().trim(), c);
+          });
+          // Proteger borradores locales y ediciones recientes
+          local.forEach((c) => {
+            const key = c.slug.toLowerCase().trim();
+            const serverVersion = map.get(key);
+            const hasLocalDraft = !!loadDashboardDraft(c.id);
+            if (hasLocalDraft || !serverVersion) {
+              map.set(key, c);
+            } else {
+              const localTime = c.updated_at ? new Date(c.updated_at).getTime() : 0;
+              const serverTime = serverVersion.updated_at ? new Date(serverVersion.updated_at).getTime() : 0;
+              if (localTime >= serverTime) {
+                map.set(key, c);
+              }
+            }
+          });
+          const merged = Array.from(map.values());
+          setCards(merged);
+          persistCards(merged);
+
+          const luigiOnline = merged.find((c) => c.slug === 'luigi-colonico');
+          if (luigiOnline) {
+            setActiveCardId(luigiOnline.id);
+          }
+        }
+      } catch (e) {
+        console.warn('Error sincronizando tarjetas en dashboard:', e);
+      }
+    };
+
+    loadData();
   }, []);
 
   const currentCard = cards.find((c) => c.id === activeCardId) || cards[0];
 
+  const handleRenewCurrentCard = (days: number = 30) => {
+    if (!currentCard) return;
+    const renewed = renewCardSubscription(currentCard.id, days);
+    if (renewed) {
+      setCards((prev) => prev.map((c) => (c.id === currentCard.id ? renewed : c)));
+      setRenewSuccess(true);
+      setTimeout(() => setRenewSuccess(false), 3000);
+    }
+  };
+
   const handleCardUpdate = (fields: Partial<FullCard>) => {
     if (!currentCard) return;
-    const updated = { ...currentCard, ...fields };
+    const updated = { ...currentCard, ...fields, updated_at: new Date().toISOString() };
     const newCards = cards.map((c) => (c.id === currentCard.id ? updated : c));
     setCards(newCards);
     saveCard(updated);
+    saveDashboardDraft(currentCard.id, updated);
+    setLastAutoSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   };
 
   const handleLinksUpdate = (newLinks: CardLink[]) => {
     if (!currentCard) return;
-    const updated = { ...currentCard, links: newLinks };
+    const updated = { ...currentCard, links: newLinks, updated_at: new Date().toISOString() };
     const newCards = cards.map((c) => (c.id === currentCard.id ? updated : c));
     setCards(newCards);
     saveCard(updated);
+    saveDashboardDraft(currentCard.id, updated);
+    setLastAutoSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   };
 
   const handleMultimediaUpdate = (newItems: CatalogMultimedia[]) => {
     if (!currentCard) return;
-    const updated = { ...currentCard, multimedia: newItems };
+    const updated = { ...currentCard, multimedia: newItems, updated_at: new Date().toISOString() };
     const newCards = cards.map((c) => (c.id === currentCard.id ? updated : c));
     setCards(newCards);
     saveCard(updated);
+    saveDashboardDraft(currentCard.id, updated);
+    setLastAutoSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   };
 
-  const handleManualSave = () => {
-    if (currentCard) {
-      saveCard(currentCard);
+  const handleManualSave = async () => {
+    if (!currentCard) return;
+    setIsSavingServer(true);
+    saveCard(currentCard);
+    clearDashboardDraft(currentCard.id);
+    setDraftRestored(false);
+
+    try {
+      await fetch('/api/cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card: currentCard }),
+      });
+    } catch (e) {
+      console.warn('Error al guardar en el servidor:', e);
+    } finally {
+      setIsSavingServer(false);
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 2500);
     }
+  };
+
+  const handleDiscardDashboardDraft = async () => {
+    if (!currentCard) return;
+    clearDashboardDraft(currentCard.id);
+    setDraftRestored(false);
+    try {
+      const res = await fetch('/api/cards');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.cards)) {
+        const found = data.cards.find((c: FullCard) => c.id === currentCard.id || c.slug === currentCard.slug);
+        if (found) {
+          setCards((prev) => prev.map((c) => (c.id === currentCard.id ? found : c)));
+          saveCard(found);
+          return;
+        }
+      }
+    } catch {}
+    window.location.reload();
   };
 
   if (!currentCard) {
@@ -99,14 +219,20 @@ export default function DashboardPage() {
         {/* Cabecera del Dashboard */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-slate-800">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
                 Editor de Tarjeta Digital
               </h1>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-semibold border border-emerald-300 dark:border-emerald-800">
                 Sincronización en Vivo
               </span>
+              {currentCard.slug === 'luigi-colonico' && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-500 font-bold border border-sky-500/20">
+                  Tu Tarjeta Principal
+                </span>
+              )}
             </div>
+
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Personaliza el chip NFC y código QR de:{' '}
               <span className="font-bold text-slate-800 dark:text-slate-200">
@@ -114,6 +240,36 @@ export default function DashboardPage() {
               </span>{' '}
               ({currentCard.company_name || 'Sin empresa'})
             </p>
+
+            {/* Ficha de Ciclo de Vida y Vigencia */}
+            {(() => {
+              const exp = getCardExpirationInfo(currentCard);
+              return (
+                <div className="flex items-center gap-2 flex-wrap text-xs mt-2.5">
+                  <span className="text-slate-500">Registrada el: <strong className="text-slate-700 dark:text-slate-300">{exp.formattedCreated}</strong></span>
+                  <span className="text-slate-300 dark:text-slate-700">•</span>
+                  <span className="text-slate-500">Vencimiento: <strong className="text-slate-700 dark:text-slate-300">{exp.formattedExpires}</strong></span>
+                  
+                  {exp.status === 'expired' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-500 border border-red-500/20">
+                      <Clock className="w-3 h-3" />
+                      {exp.badgeLabel}
+                    </span>
+                  )}
+                  {exp.status === 'expiring_soon' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 animate-pulse">
+                      <AlertTriangle className="w-3 h-3" />
+                      {exp.badgeLabel}
+                    </span>
+                  )}
+                  {exp.status === 'active' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                      Plan 30 Días: {exp.badgeLabel}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
@@ -123,7 +279,7 @@ export default function DashboardPage() {
               className="px-3.5 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors"
             >
               <Building2 className="w-3.5 h-3.5" />
-              <span>Panel B2B Empresa</span>
+              <span>Panel B2B</span>
             </Link>
 
             {/* Selector de Tarjeta Demo */}
@@ -135,6 +291,7 @@ export default function DashboardPage() {
               >
                 {cards.map((c) => (
                   <option key={c.id} value={c.id}>
+                    {c.slug === 'luigi-colonico' ? '⭐ (Tú) ' : ''}
                     {c.full_name} ({c.layout_type || 'modern'})
                   </option>
                 ))}
@@ -148,7 +305,7 @@ export default function DashboardPage() {
               className="lg:hidden px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold flex items-center gap-1.5"
             >
               <Smartphone className="w-3.5 h-3.5 text-sky-500" />
-              <span>{showMobilePreview ? 'Ocultar Móvil' : 'Ver Móvil'}</span>
+              <span>{showMobilePreview ? 'Ocultar' : 'Ver Móvil'}</span>
             </button>
 
             {/* Enlace al perfil público */}
@@ -159,8 +316,23 @@ export default function DashboardPage() {
               className="px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5"
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              <span>Abrir /c/{currentCard.slug}</span>
+              <span>Ver Perfil</span>
             </a>
+
+            {/* Botón Renovar (+30d) */}
+            <button
+              type="button"
+              onClick={() => handleRenewCurrentCard(30)}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border ${
+                renewSuccess
+                  ? 'bg-emerald-500 text-white border-emerald-500'
+                  : 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 border-amber-200 dark:border-amber-800/60'
+              }`}
+              title="Extender suscripción por 30 días adicionales"
+            >
+              <CalendarPlus className="w-3.5 h-3.5" />
+              <span>{renewSuccess ? '¡Renovada +30d!' : 'Renovar +30d'}</span>
+            </button>
 
             {/* Botón Guardar Cambios */}
             <button
@@ -171,7 +343,7 @@ export default function DashboardPage() {
               {isSaved ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-white" />
-                  <span>¡Cambios Guardados!</span>
+                  <span>¡Guardado!</span>
                 </>
               ) : (
                 <>
@@ -181,6 +353,66 @@ export default function DashboardPage() {
               )}
             </button>
           </div>
+        </div>
+
+        {/* Banner de Advertencia si está por vencer o vencida */}
+        {(() => {
+          const exp = getCardExpirationInfo(currentCard);
+          if (exp.isExpiringSoon || exp.isExpired) {
+            return (
+              <div className={`mt-4 p-4 rounded-2xl border flex items-center justify-between gap-3 text-xs ${
+                exp.isExpired
+                  ? 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400'
+              }`}>
+                <div className="flex items-center gap-2.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>
+                    <strong>{exp.isExpired ? '¡Tarjeta Expirada!' : '¡Alerta de Vencimiento Próximo!'}</strong>{' '}
+                    {exp.alertMessage}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRenewCurrentCard(30)}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500 text-white font-bold hover:bg-amber-600 transition-colors shrink-0"
+                >
+                  Renovar Ahora (+30 días)
+                </button>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
+        {/* Barra de Estado: Autoguardado & Borrador */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-semibold text-slate-700 dark:text-slate-300">
+              Autoguardado en tiempo real activo
+            </span>
+            {lastAutoSaved && (
+              <span className="text-slate-400 font-mono text-[11px]">
+                (Último cambio: {lastAutoSaved})
+              </span>
+            )}
+          </div>
+
+          {draftRestored && (
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-bold text-[10px]">
+                Borrador temporal pendiente
+              </span>
+              <button
+                type="button"
+                onClick={handleDiscardDashboardDraft}
+                className="text-rose-600 dark:text-rose-400 hover:underline font-bold text-[11px]"
+              >
+                Descartar cambios no guardados
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Layout en Pantalla Dividida (Split Screen en Desktop) */}

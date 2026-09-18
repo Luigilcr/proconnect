@@ -1,19 +1,12 @@
-﻿// © ProConnect. Todos los derechos reservados.
+// © ProConnect. Todos los derechos reservados.
 // Queda prohibida la reproducción, copia o ingeniería inversa de este software.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from '@supabase/ssr';
 
 /**
  * MIDDLEWARE DE PROTECCIÓN DE RUTAS — ProConnect
- *
- * Si Supabase está configurado (env vars presentes), valida la sesión mediante
- * la cookie `sb-<projectRef>-auth-token` que Supabase inyecta automáticamente.
- * Si no está configurado (modo demo local), deja pasar todas las peticiones.
- *
- * Jerarquía de acceso:
- *   superadmin  → /admin, /org-dashboard, /dashboard
- *   org_admin   → /org-dashboard, /dashboard
- *   client      → /dashboard
+ * Utiliza @supabase/ssr para leer cookies de autenticación validadas por Supabase.
  */
 
 const PROTECTED_ROUTES: { pattern: RegExp; roles: string[] }[] = [
@@ -23,7 +16,7 @@ const PROTECTED_ROUTES: { pattern: RegExp; roles: string[] }[] = [
 ];
 
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
+  let res = NextResponse.next({ request: req });
   const pathname = req.nextUrl.pathname;
 
   // ¿La ruta requiere protección?
@@ -33,64 +26,46 @@ export async function middleware(req: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // ── MODO DEMO/LOCAL: sin Supabase → acceso libre ──
+  // Si no hay variables configuradas, dejar pasar (modo demo)
   if (!supabaseUrl || !supabaseKey) {
     return res;
   }
 
-  // ── MODO PRODUCCIÓN: verificar sesión via REST API de Supabase ──
-  // La sesión se lleva en la cookie `sb-<ref>-auth-token` (base64 JSON).
-  // Extraemos el access_token y lo validamos contra la API de Supabase.
   try {
-    const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
-    const authCookie =
-      req.cookies.get(`sb-${projectRef}-auth-token`)?.value ||
-      req.cookies.get('supabase-auth-token')?.value;
-
-    if (!authCookie) {
-      return redirectToLogin(req, pathname);
-    }
-
-    // Decodificar el token de sesión (array JSON codificado en base64)
-    let accessToken: string | null = null;
-    try {
-      const decoded = JSON.parse(atob(authCookie));
-      accessToken = Array.isArray(decoded) ? decoded[0] : decoded?.access_token ?? null;
-    } catch {
-      return redirectToLogin(req, pathname);
-    }
-
-    if (!accessToken) return redirectToLogin(req, pathname);
-
-    // Obtener el usuario actual desde la API de Supabase
-    const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        apikey: supabaseKey,
+    const supabase = createServerClient(supabaseUrl, supabaseKey, {
+      cookies: {
+        getAll() {
+          return req.cookies.getAll();
+        },
+        setAll(cookiesToSet: Array<{ name: string; value: string; options?: Record<string, unknown> }>) {
+          cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value));
+          res = NextResponse.next({ request: req });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            res.cookies.set(name, value, options as any)
+          );
+        },
       },
     });
 
-    if (!userRes.ok) return redirectToLogin(req, pathname);
+    const { data: { user } } = await supabase.auth.getUser();
 
-    const user = await userRes.json();
-    const userId = user?.id;
+    if (!user) {
+      return redirectToLogin(req, pathname);
+    }
 
-    if (!userId) return redirectToLogin(req, pathname);
+    // Superadmin garantizado para el dueño
+    if (user.email?.toLowerCase() === 'luigicolonico@gmail.com') {
+      return res;
+    }
 
-    // Obtener el rol del usuario desde public.users
-    const profileRes = await fetch(
-      `${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=role&limit=1`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          apikey: supabaseKey,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    // Obtener rol desde public.users
+    const { data: profile } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .single();
 
-    const profiles = profileRes.ok ? await profileRes.json() : [];
-    const userRole: string = profiles?.[0]?.role ?? 'client';
+    const userRole: string = profile?.role ?? 'client';
 
     if (!matchedRoute.roles.includes(userRole)) {
       const fallback = req.nextUrl.clone();
@@ -100,8 +75,8 @@ export async function middleware(req: NextRequest) {
 
     return res;
   } catch {
-    // En caso de error de red, dejar pasar (no bloquear por fallo de infra)
-    return res;
+    // Si hay fallo temporal de red o sesión, pedir login
+    return redirectToLogin(req, pathname);
   }
 }
 

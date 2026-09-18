@@ -35,3 +35,5 @@ next-env.d.ts
 
 # binaries
 cloudflared.exe
+
+.vercel

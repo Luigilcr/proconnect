@@ -459,6 +459,8 @@
       }
     ],
     "multimedia": [],
-    "updated_at": "2026-09-18T02:16:31.712Z"
+    "updated_at": "2026-09-18T02:16:31.712Z",
+    "expires_at": "2026-10-18T02:16:27.031Z",
+    "plan_duration": "monthly"
   }
 ]

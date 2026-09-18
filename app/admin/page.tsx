@@ -16,6 +16,9 @@ import {
   updateUserRole,
   toggleOrganizationSubscription,
   createNewOrganization,
+  deleteCard,
+  renewCardSubscription,
+  persistCards,
 } from '@/lib/data/card-store';
 import {
   MetricsOverview,
@@ -42,11 +45,31 @@ export default function SuperadminPage() {
     totalLeads: 0,
   });
 
-  const loadData = () => {
-    setCards(getStoredCards());
+  const loadData = async () => {
+    // 1. Cargar localmente primero
+    const local = getStoredCards();
+    setCards(local);
     setUsers(getStoredUsers());
     setOrganizations(getStoredOrganizations());
     setMetrics(getSystemMetrics());
+
+    // 2. Sincronizar con el servidor (/api/cards) para traer cualquier tarjeta en la nube
+    try {
+      const res = await fetch('/api/cards');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.cards)) {
+        const map = new Map<string, FullCard>();
+        local.forEach((c) => map.set(c.slug.toLowerCase().trim(), c));
+        data.cards.forEach((c: FullCard) => {
+          if (c && c.slug) map.set(c.slug.toLowerCase().trim(), c);
+        });
+        const merged = Array.from(map.values());
+        setCards(merged);
+        persistCards(merged);
+      }
+    } catch (e) {
+      console.warn('Error sincronizando tarjetas del servidor:', e);
+    }
   };
 
   useEffect(() => {
@@ -55,6 +78,26 @@ export default function SuperadminPage() {
 
   const handleToggleCardActive = (cardId: string) => {
     toggleCardActiveStatus(cardId);
+    loadData();
+  };
+
+  const handleRenewCard = (cardId: string, days: number = 30) => {
+    renewCardSubscription(cardId, days);
+    loadData();
+  };
+
+  const handleDeleteCard = async (cardId: string) => {
+    deleteCard(cardId);
+    setCards((prev) => prev.filter((c) => c.id !== cardId));
+
+    try {
+      await fetch(`/api/cards?id=${encodeURIComponent(cardId)}`, {
+        method: 'DELETE',
+      });
+    } catch (err) {
+      console.error('Error al eliminar tarjeta en servidor:', err);
+    }
+
     loadData();
   };
 
@@ -101,12 +144,12 @@ export default function SuperadminPage() {
                 <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
                   Panel de Superadministrador
                 </h1>
-                <span className="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800">
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 font-bold border border-amber-500/20">
                   Root Admin
                 </span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Control de multi-inquilinos, métricas globales del ecosistema y activación de tarjetas NFC.
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Control de licencias B2B, vigencia mensual, emisión de tarjetas y usuarios.
               </p>
             </div>
           </div>
@@ -114,9 +157,9 @@ export default function SuperadminPage() {
           <button
             type="button"
             onClick={loadData}
-            className="self-start sm:self-auto px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 transition-colors"
+            className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800/60 text-xs font-semibold flex items-center gap-2 transition-colors self-start sm:self-auto"
           >
-            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+            <RefreshCw className="w-3.5 h-3.5" />
             <span>Actualizar Datos</span>
           </button>
         </div>
@@ -129,11 +172,22 @@ export default function SuperadminPage() {
           <MetricsOverview metrics={metrics} />
         </section>
 
-        {/* 2. Tabla de Tarjetas NFC */}
+        {/* 2. Empresas, Clientes Corporativos y Restaurantes */}
+        <section>
+          <OrganizationManagementTable
+            organizations={organizations}
+            onToggleSubscription={handleToggleOrgSubscription}
+            onCreateOrg={handleCreateOrg}
+          />
+        </section>
+
+        {/* 3. Tabla de Tarjetas NFC */}
         <section>
           <CardManagementTable
             cards={cards}
             onToggleActive={handleToggleCardActive}
+            onDeleteCard={handleDeleteCard}
+            onRenewCard={handleRenewCard}
           />
         </section>
 

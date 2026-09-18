@@ -21,6 +21,7 @@ import {
   DEMO_ORGANIZATIONS,
   DEMO_USERS,
   DEMO_LEADS,
+  LUIGI_COLONICO_CARD,
 } from './demo-data';
 
 const STORAGE_CARDS_KEY = 'proconnect_cards_data_v2';
@@ -76,6 +77,30 @@ export function saveOrganization(org: Organization): Organization {
 // 2. GESTIÓN DE TARJETAS (CARDS)
 // ============================================================================
 
+function ensureCardExpiration(card: FullCard): FullCard {
+  if (card.expires_at) return card;
+  const now = Date.now();
+  // Asignar fechas demostrativas según el slug si aún no tiene expires_at
+  if (card.slug === 'luigi-colonico') {
+    return { ...card, expires_at: new Date(now + 30 * 86400000).toISOString(), plan_duration: 'monthly' };
+  }
+  if (card.slug === 'carlos-fibraconnect') {
+    return { ...card, expires_at: new Date(now + 4 * 86400000).toISOString(), plan_duration: 'monthly' };
+  }
+  if (card.slug === 'elena-rodriguez') {
+    return { ...card, expires_at: new Date(now - 3 * 86400000).toISOString(), plan_duration: 'monthly' };
+  }
+  if (card.slug === 'marcos-tech') {
+    return { ...card, expires_at: new Date(now + 6 * 86400000).toISOString(), plan_duration: 'monthly' };
+  }
+  const created = card.created_at ? new Date(card.created_at).getTime() : now;
+  return {
+    ...card,
+    expires_at: new Date(created + 30 * 86400000).toISOString(),
+    plan_duration: card.plan_duration || 'monthly',
+  };
+}
+
 export function getStoredCards(): FullCard[] {
   if (typeof window === 'undefined') {
     try {
@@ -87,26 +112,37 @@ export function getStoredCards(): FullCard[] {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const map = new Map<string, FullCard>();
-          DEMO_CARDS.forEach((c) => map.set(c.slug.toLowerCase().trim(), c));
+          DEMO_CARDS.forEach((c) => map.set(c.slug.toLowerCase().trim(), ensureCardExpiration(c)));
           parsed.forEach((c: FullCard) => {
-            if (c && c.slug) map.set(c.slug.toLowerCase().trim(), c);
+            if (c && c.slug) map.set(c.slug.toLowerCase().trim(), ensureCardExpiration(c));
           });
           return Array.from(map.values());
         }
       }
     } catch {}
-    return DEMO_CARDS;
+    return DEMO_CARDS.map(ensureCardExpiration);
   }
   try {
     const raw = localStorage.getItem(STORAGE_CARDS_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(DEMO_CARDS));
-      return DEMO_CARDS;
+      const initial = DEMO_CARDS.map(ensureCardExpiration);
+      localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(initial));
+      return initial;
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEMO_CARDS;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      if (!parsed.some((c: FullCard) => c?.slug === 'luigi-colonico')) {
+        parsed.unshift(ensureCardExpiration(LUIGI_COLONICO_CARD));
+      }
+      const updated = parsed.map(ensureCardExpiration);
+      try {
+        localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    }
+    return DEMO_CARDS.map(ensureCardExpiration);
   } catch {
-    return DEMO_CARDS;
+    return DEMO_CARDS.map(ensureCardExpiration);
   }
 }
 
@@ -137,23 +173,73 @@ export function getCardsByOrganizationId(orgId: string): FullCard[] {
 
 export function saveCard(updatedCard: FullCard): FullCard {
   const cards = getStoredCards();
-  const index = cards.findIndex((c) => c.id === updatedCard.id);
+  const index = cards.findIndex(
+    (c) => c.id === updatedCard.id || (c.slug && c.slug.toLowerCase() === updatedCard.slug.toLowerCase())
+  );
+
+  let finalCard: FullCard = {
+    ...updatedCard,
+    expires_at: updatedCard.expires_at || new Date(Date.now() + 30 * 86400000).toISOString(),
+    plan_duration: updatedCard.plan_duration || 'monthly',
+  };
 
   if (index >= 0) {
     cards[index] = {
-      ...updatedCard,
+      ...cards[index],
+      ...finalCard,
       updated_at: new Date().toISOString(),
     };
+    finalCard = cards[index];
   } else {
-    cards.unshift({
-      ...updatedCard,
-      created_at: new Date().toISOString(),
+    finalCard = {
+      ...finalCard,
+      created_at: finalCard.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    });
+    };
+    cards.unshift(finalCard);
   }
 
   persistCards(cards);
-  return updatedCard;
+
+  // Sincronización transparente con el servidor /api/cards
+  if (typeof window !== 'undefined') {
+    fetch('/api/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card: finalCard }),
+    }).catch((err) => console.warn('Error sincronizando tarjeta con servidor:', err));
+  }
+
+  return finalCard;
+}
+
+export function renewCardSubscription(cardId: string, daysToAdd: number = 30): FullCard | null {
+  const cards = getStoredCards();
+  const index = cards.findIndex((c) => c.id === cardId || c.slug === cardId);
+  if (index < 0) return null;
+
+  const card = cards[index];
+  const now = Date.now();
+  const currentExpiry = card.expires_at ? new Date(card.expires_at).getTime() : now;
+  const baseTime = currentExpiry > now ? currentExpiry : now;
+  const newExpiry = new Date(baseTime + daysToAdd * 86400000).toISOString();
+
+  card.expires_at = newExpiry;
+  card.is_active = true;
+  card.updated_at = new Date().toISOString();
+
+  cards[index] = card;
+  persistCards(cards);
+
+  if (typeof window !== 'undefined') {
+    fetch('/api/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card }),
+    }).catch((err) => console.warn('Error renovando tarjeta en servidor:', err));
+  }
+
+  return card;
 }
 
 export function toggleCardActiveStatus(cardId: string): boolean {
@@ -163,6 +249,15 @@ export function toggleCardActiveStatus(cardId: string): boolean {
 
   card.is_active = !card.is_active;
   persistCards(cards);
+
+  if (typeof window !== 'undefined') {
+    fetch('/api/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card }),
+    }).catch((err) => console.warn('Error sincronizando estado activo en servidor:', err));
+  }
+
   return card.is_active;
 }
 

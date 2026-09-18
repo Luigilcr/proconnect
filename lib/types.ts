@@ -128,6 +128,8 @@ export interface Card {
 
   created_at: string;
   updated_at?: string;
+  expires_at?: string | null;
+  plan_duration?: 'monthly' | 'annual' | 'lifetime' | 'custom';
 }
 
 export interface CardLink {

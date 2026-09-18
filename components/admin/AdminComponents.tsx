@@ -6,6 +6,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { FullCard, SystemMetrics, User, UserRole, Organization, OrgType } from '@/lib/types';
 import {
   Users,
@@ -21,7 +22,14 @@ import {
   UtensilsCrossed,
   Power,
   X,
+  Briefcase,
+  Trash2,
+  Calendar,
+  CalendarPlus,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
+import { getCardExpirationInfo } from '@/lib/card-lifecycle';
 
 interface MetricsOverviewProps {
   metrics: SystemMetrics;
@@ -91,27 +99,128 @@ export const MetricsOverview: React.FC<MetricsOverviewProps> = ({ metrics }) => 
 interface CardTableProps {
   cards: FullCard[];
   onToggleActive: (id: string) => void;
+  onDeleteCard?: (id: string) => void;
+  onRenewCard?: (id: string, days?: number) => void;
 }
 
 export const CardManagementTable: React.FC<CardTableProps> = ({
   cards,
   onToggleActive,
+  onDeleteCard,
+  onRenewCard,
 }) => {
+  const [cardToDelete, setCardToDelete] = React.useState<FullCard | null>(null);
+  const [renewSuccessId, setRenewSuccessId] = React.useState<string | null>(null);
+  const [filterTab, setFilterTab] = React.useState<'all' | 'expiring' | 'expired' | 'active'>('all');
+
+  const expiringCount = cards.filter((c) => getCardExpirationInfo(c).isExpiringSoon).length;
+  const expiredCount = cards.filter((c) => getCardExpirationInfo(c).isExpired).length;
+  const activeCount = cards.filter((c) => getCardExpirationInfo(c).status === 'active').length;
+
+  const filteredCards = cards.filter((c) => {
+    const info = getCardExpirationInfo(c);
+    if (filterTab === 'expiring') return info.isExpiringSoon;
+    if (filterTab === 'expired') return info.isExpired;
+    if (filterTab === 'active') return info.status === 'active';
+    return true;
+  });
+
+  const handleRenew = (cardId: string) => {
+    if (onRenewCard) {
+      onRenewCard(cardId, 30);
+      setRenewSuccessId(cardId);
+      setTimeout(() => setRenewSuccessId(null), 3000);
+    }
+  };
+
   return (
     <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
-      <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            Tarjetas NFC & Perfiles Públicos
-          </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Control de publicación, activación/desactivación y plantillas asignadas.
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              Tarjetas NFC & Perfiles Públicos
+            </h3>
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+              {cards.length} total
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Registro cronológico, control de vigencia mensual/anual y alertas preventivas.
           </p>
         </div>
-        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-          {cards.length} tarjetas
-        </span>
+
+        {/* Pestañas de filtrado por vencimiento */}
+        <div className="flex items-center gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/80 text-xs font-semibold overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setFilterTab('all')}
+            className={`px-3 py-1.5 rounded-xl transition-colors shrink-0 ${
+              filterTab === 'all'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            Todas ({cards.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilterTab('expiring')}
+            className={`px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 shrink-0 ${
+              filterTab === 'expiring'
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
+            }`}
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>Por Vencer ({expiringCount})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilterTab('expired')}
+            className={`px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 shrink-0 ${
+              filterTab === 'expired'
+                ? 'bg-red-500 text-white shadow-sm'
+                : 'text-red-600 dark:text-red-400 hover:bg-red-500/10'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Vencidas ({expiredCount})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilterTab('active')}
+            className={`px-3 py-1.5 rounded-xl transition-colors shrink-0 ${
+              filterTab === 'active'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            Activas ({activeCount})
+          </button>
+        </div>
       </div>
+
+      {/* Banner de Alerta Preventiva si hay tarjetas por vencer o vencidas */}
+      {(expiringCount > 0 || expiredCount > 0) && filterTab === 'all' && (
+        <div className="mx-5 my-4 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div className="flex-1 text-xs">
+            <p className="font-bold text-amber-700 dark:text-amber-400">
+              Control Preventivo de Vencimiento de Tarjetas
+            </p>
+            <p className="text-slate-600 dark:text-slate-300 mt-0.5">
+              {expiringCount > 0 && (
+                <span>⚠️ Hay <strong>{expiringCount} tarjeta(s)</strong> que vencen en 7 días o menos. </span>
+              )}
+              {expiredCount > 0 && (
+                <span>🔴 Hay <strong>{expiredCount} tarjeta(s)</strong> que ya han cumplido su periodo mensual. </span>
+              )}
+              Puedes extender o renovar su vigencia en 30 días usando el botón <strong>+30d</strong> en cada fila.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs">
@@ -119,86 +228,206 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
             <tr>
               <th className="px-5 py-3.5">Titular / Empresa</th>
               <th className="px-5 py-3.5">Slug Público</th>
-              <th className="px-5 py-3.5">Plantilla</th>
-              <th className="px-5 py-3.5">Enlaces</th>
+              <th className="px-5 py-3.5">Registro</th>
+              <th className="px-5 py-3.5">Vencimiento & Alerta</th>
               <th className="px-5 py-3.5 text-center">Estado</th>
-              <th className="px-5 py-3.5 text-right">Acción</th>
+              <th className="px-5 py-3.5 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {cards.map((card) => (
-              <tr
-                key={card.id}
-                className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
-              >
-                <td className="px-5 py-4">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={
-                        card.profile_photo_url ||
-                        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'
-                      }
-                      alt={card.full_name}
-                      className="w-9 h-9 rounded-xl object-cover shrink-0"
-                    />
-                    <div>
-                      <p className="font-bold text-slate-900 dark:text-white text-xs">
-                        {card.full_name}
-                      </p>
-                      <p className="text-[11px] text-slate-500 truncate max-w-[200px]">
-                        {card.job_title || card.company_name || 'Sin empresa'}
-                      </p>
+            {filteredCards.map((card) => {
+              const expInfo = getCardExpirationInfo(card);
+              const isRenewedNow = renewSuccessId === card.id;
+
+              return (
+                <tr
+                  key={card.id}
+                  className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
+                >
+                  <td className="px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={
+                          card.profile_photo_url ||
+                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'
+                        }
+                        alt={card.full_name}
+                        className="w-9 h-9 rounded-xl object-cover shrink-0"
+                      />
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-bold text-slate-900 dark:text-white text-xs">
+                            {card.full_name}
+                          </p>
+                          {card.slug === 'luigi-colonico' && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 font-bold border border-sky-500/20">
+                              Tu Tarjeta
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate max-w-[200px]">
+                          {card.job_title || card.company_name || 'Sin empresa'}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </td>
+                  </td>
 
-                <td className="px-5 py-4 font-mono text-[11px] text-sky-600 dark:text-sky-400">
-                  /c/{card.slug}
-                </td>
+                  <td className="px-5 py-4 font-mono text-[11px] text-sky-600 dark:text-sky-400">
+                    /c/{card.slug}
+                  </td>
 
-                <td className="px-5 py-4">
-                  <span className="capitalize px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
-                    {card.layout_type}
-                  </span>
-                </td>
+                  <td className="px-5 py-4 text-slate-600 dark:text-slate-400">
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      {expInfo.formattedCreated}
+                    </span>
+                  </td>
 
-                <td className="px-5 py-4 text-slate-600 dark:text-slate-300">
-                  {card.links ? card.links.length : 0} links
-                </td>
+                  <td className="px-5 py-4">
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {expInfo.formattedExpires}
+                      </p>
+                      {expInfo.status === 'expired' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-500 border border-red-500/20">
+                          <Clock className="w-3 h-3" />
+                          {expInfo.badgeLabel}
+                        </span>
+                      )}
+                      {expInfo.status === 'expiring_soon' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 animate-pulse">
+                          <AlertTriangle className="w-3 h-3" />
+                          {expInfo.badgeLabel}
+                        </span>
+                      )}
+                      {expInfo.status === 'active' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          {expInfo.badgeLabel}
+                        </span>
+                      )}
+                    </div>
+                  </td>
 
-                <td className="px-5 py-4 text-center">
-                  <button
-                    type="button"
-                    onClick={() => onToggleActive(card.id)}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                      card.is_active ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
-                    }`}
-                    title={card.is_active ? 'Desactivar tarjeta' : 'Activar tarjeta'}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        card.is_active ? 'translate-x-4' : 'translate-x-1'
+                  <td className="px-5 py-4 text-center">
+                    <button
+                      type="button"
+                      onClick={() => onToggleActive(card.id)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                        card.is_active ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
                       }`}
-                    />
-                  </button>
-                </td>
+                      title={card.is_active ? 'Desactivar tarjeta' : 'Activar tarjeta'}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                          card.is_active ? 'translate-x-4' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </td>
 
-                <td className="px-5 py-4 text-right">
-                  <a
-                    href={`/c/${card.slug}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400 font-semibold hover:bg-sky-100 dark:hover:bg-sky-900/50 transition-colors"
-                  >
-                    <span>Ver Perfil</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </td>
-              </tr>
-            ))}
+                  <td className="px-5 py-4 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {/* Botón Renovar (+30 días) */}
+                      {onRenewCard && (
+                        <button
+                          type="button"
+                          onClick={() => handleRenew(card.id)}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold transition-all text-xs border ${
+                            isRenewedNow
+                              ? 'bg-emerald-500 text-white border-emerald-500 scale-105'
+                              : 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 border-amber-200 dark:border-amber-800/60'
+                          }`}
+                          title="Renovar suscripción por +30 días"
+                        >
+                          <CalendarPlus className="w-3.5 h-3.5" />
+                          <span>{isRenewedNow ? '¡Renovada!' : '+30d'}</span>
+                        </button>
+                      )}
+
+                      <a
+                        href={`/c/${card.slug}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400 font-semibold hover:bg-sky-100 dark:hover:bg-sky-900/50 transition-colors"
+                      >
+                        <span>Ver Perfil</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+
+                      {onDeleteCard && (
+                        <button
+                          type="button"
+                          onClick={() => setCardToDelete(card)}
+                          className="p-1.5 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-900/50"
+                          title={`Eliminar tarjeta de ${card.full_name}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+
+
+      {/* Modal de Confirmación de Eliminación */}
+      {cardToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3 text-red-500">
+              <div className="w-10 h-10 rounded-2xl bg-red-500/10 flex items-center justify-center border border-red-500/20">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 dark:text-white text-base">
+                  ¿Eliminar Tarjeta Digital?
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Esta acción no se puede deshacer.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
+              <p className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                {cardToDelete.full_name}
+              </p>
+              <p className="text-sky-600 dark:text-sky-400 font-mono text-[11px]">
+                /c/{cardToDelete.slug}
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              El perfil digital dejará de estar disponible de inmediato y el enlace público o chip NFC mostrará un mensaje de tarjeta no encontrada.
+            </p>
+
+            <div className="pt-2 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCardToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteCard && cardToDelete) {
+                    onDeleteCard(cardToDelete.id);
+                  }
+                  setCardToDelete(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-md shadow-red-600/20"
+              >
+                Sí, Eliminar Definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -344,14 +573,24 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowModal(true)}
-          className="btn-brand text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>+ Nueva Empresa / Negocio</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Link
+            href="/org-dashboard"
+            className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-bold text-xs flex items-center gap-1.5 border border-purple-200 dark:border-purple-800 transition-colors shadow-sm"
+          >
+            <Briefcase className="w-4 h-4" />
+            <span>Abrir Portal B2B / Restaurantes</span>
+          </Link>
+
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="btn-brand text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Nueva Empresa / Negocio</span>
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -422,18 +661,28 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
                   </td>
 
                   <td className="px-5 py-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onToggleSubscription(org.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-sm ${
-                        isSuspended
-                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                          : 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 dark:bg-red-950/30 dark:border-red-800'
-                      }`}
-                    >
-                      <Power className="w-3.5 h-3.5" />
-                      <span>{isSuspended ? 'Reactivar Servicio' : 'Suspender Cuenta'}</span>
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/org-dashboard?org=${org.slug}`}
+                        className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/50 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 font-bold text-xs transition-colors flex items-center gap-1 border border-purple-200 dark:border-purple-800 shadow-sm"
+                      >
+                        <span>Gestionar</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </Link>
+
+                      <button
+                        type="button"
+                        onClick={() => onToggleSubscription(org.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-sm ${
+                          isSuspended
+                            ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                            : 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 dark:bg-red-950/30 dark:border-red-800'
+                        }`}
+                      >
+                        <Power className="w-3.5 h-3.5" />
+                        <span>{isSuspended ? 'Reactivar' : 'Suspender'}</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

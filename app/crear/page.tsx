@@ -10,7 +10,7 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
 import { Navbar } from '@/components/layout/Navbar';
@@ -19,6 +19,9 @@ import { PRESET_TEMPLATES } from '@/lib/data/demo-data';
 import { DigitalCard } from '@/components/card/DigitalCard';
 import { saveCard } from '@/lib/data/card-store';
 import { FullCard, PresetTemplate } from '@/lib/types';
+import { saveCardDraft, loadCardDraft, clearCardDraft } from '@/lib/draft-store';
+import { AuthModal } from '@/components/auth/AuthModal';
+import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import {
   Sparkles,
   ArrowRight,
@@ -44,6 +47,10 @@ import {
   Loader2,
   Sliders,
   Type,
+  Globe,
+  Instagram,
+  Linkedin,
+  Video,
 } from 'lucide-react';
 
 export default function CrearTarjetaPage() {
@@ -55,6 +62,10 @@ export default function CrearTarjetaPage() {
   const [companyName, setCompanyName] = useState('ProConnect Enterprise');
   const [phoneNumber, setPhoneNumber] = useState('+58 412 555 1234');
   const [email, setEmail] = useState('contacto@proconnect.app');
+  const [website, setWebsite] = useState('https://proconnect.app');
+  const [instagram, setInstagram] = useState('@proconnect.app');
+  const [linkedin, setLinkedin] = useState('proconnect-saas');
+  const [tiktok, setTiktok] = useState('');
   const [bio, setBio] = useState('Somos tu aliado estratégico en conectividad inteligente y transformación digital.');
   const [avatarUrl, setAvatarUrl] = useState('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400');
   const [coverUrl, setCoverUrl] = useState('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800');
@@ -75,6 +86,12 @@ export default function CrearTarjetaPage() {
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [enableCrm, setEnableCrm] = useState<boolean>(true);
 
+  // Estados de Persistencia Temporal (Auto-Save) y Product-Led Auth
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState(false);
+
   const [copied, setCopied] = useState(false);
 
   // Obtener plantilla activa
@@ -88,9 +105,10 @@ export default function CrearTarjetaPage() {
     : `https://proconnect.app/c/${slug}`;
 
   // Construir objeto FullCard en memoria para el simulador
+  const uniqueCardId = slug === 'luigi-colonico' ? 'draft-card-id' : `c_${slug || 'card'}_${Date.now()}`;
   const previewCard: FullCard = {
-    id: 'draft-card-id',
-    user_id: 'draft-user-id',
+    id: uniqueCardId,
+    user_id: 'user-created',
     slug: slug,
     is_active: true,
     full_name: fullName || 'Tu Nombre y Apellido',
@@ -118,39 +136,99 @@ export default function CrearTarjetaPage() {
     custom_vcf_notes: 'Tarjeta generada con ProConnect',
     enable_crm_capture: enableCrm,
     created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+    plan_duration: 'monthly',
 
     links: [
       {
         id: 'link-wa',
-        card_id: 'draft-card-id',
+        card_id: uniqueCardId,
         type: 'whatsapp',
         label: 'Conversar por WhatsApp',
         url: phoneNumber.startsWith('http')
           ? phoneNumber
           : `https://wa.me/${phoneNumber.replace(/[^\d]/g, '')}`,
-        is_active: true,
+        is_active: !!phoneNumber,
         position_order: 1,
       },
       {
         id: 'link-call',
-        card_id: 'draft-card-id',
+        card_id: uniqueCardId,
         type: 'phone',
         label: 'Llamar Directamente',
         url: phoneNumber.startsWith('tel:')
           ? phoneNumber
           : `tel:${phoneNumber.replace(/[^\d+]/g, '')}`,
-        is_active: true,
+        is_active: !!phoneNumber,
         position_order: 2,
       },
       {
         id: 'link-mail',
-        card_id: 'draft-card-id',
+        card_id: uniqueCardId,
         type: 'email',
         label: 'Enviar Correo Electrónico',
         url: email.startsWith('mailto:') ? email : `mailto:${email}`,
-        is_active: true,
+        is_active: !!email,
         position_order: 3,
       },
+      ...(website
+        ? [
+            {
+              id: 'link-web',
+              card_id: uniqueCardId,
+              type: 'website' as const,
+              label: 'Sitio Web',
+              url: website.startsWith('http') ? website : `https://${website}`,
+              is_active: true,
+              position_order: 4,
+            },
+          ]
+        : []),
+      ...(instagram
+        ? [
+            {
+              id: 'link-ig',
+              card_id: uniqueCardId,
+              type: 'instagram' as const,
+              label: 'Instagram',
+              url: instagram.startsWith('http')
+                ? instagram
+                : `https://instagram.com/${instagram.replace(/^@/, '')}`,
+              is_active: true,
+              position_order: 5,
+            },
+          ]
+        : []),
+      ...(linkedin
+        ? [
+            {
+              id: 'link-li',
+              card_id: uniqueCardId,
+              type: 'linkedin' as const,
+              label: 'LinkedIn',
+              url: linkedin.startsWith('http')
+                ? linkedin
+                : `https://linkedin.com/in/${linkedin.replace(/^@/, '')}`,
+              is_active: true,
+              position_order: 6,
+            },
+          ]
+        : []),
+      ...(tiktok
+        ? [
+            {
+              id: 'link-tt',
+              card_id: uniqueCardId,
+              type: 'tiktok' as const,
+              label: 'TikTok',
+              url: tiktok.startsWith('http')
+                ? tiktok
+                : `https://tiktok.com/@${tiktok.replace(/^@/, '')}`,
+              is_active: true,
+              position_order: 7,
+            },
+          ]
+        : []),
     ],
     multimedia: [],
   };
@@ -273,18 +351,151 @@ export default function CrearTarjetaPage() {
     }
   };
 
-    const handleFinishAndSave = async () => {
-    saveCard(previewCard);
+  // Restaurar borrador temporal si existe al cargar la página
+  useEffect(() => {
+    const draft = loadCardDraft();
+    if (draft) {
+      if (draft.card.full_name) setFullName(draft.card.full_name);
+      if (draft.card.job_title) setJobTitle(draft.card.job_title);
+      if (draft.card.company_name) setCompanyName(draft.card.company_name);
+      if (draft.card.bio) setBio(draft.card.bio);
+      if (draft.card.profile_photo_url) setAvatarUrl(draft.card.profile_photo_url);
+      if (draft.card.cover_photo_url) setCoverUrl(draft.card.cover_photo_url);
+      if (draft.card.logo_url !== undefined) setLogoUrl(draft.card.logo_url);
+      if (draft.card.primary_color) setCustomPrimaryColor(draft.card.primary_color);
+      if (draft.card.background_color) setCustomBgColor(draft.card.background_color);
+      if (draft.card.font_family) setCustomFont(draft.card.font_family);
+      if (draft.card.border_radius) setCustomRadius(draft.card.border_radius);
+      if (draft.card.enable_crm_capture !== undefined) setEnableCrm(draft.card.enable_crm_capture);
+      if (draft.meta) {
+        if (draft.meta.phoneNumber !== undefined) setPhoneNumber(draft.meta.phoneNumber);
+        if (draft.meta.email !== undefined) setEmail(draft.meta.email);
+        if (draft.meta.website !== undefined) setWebsite(draft.meta.website);
+        if (draft.meta.instagram !== undefined) setInstagram(draft.meta.instagram);
+        if (draft.meta.linkedin !== undefined) setLinkedin(draft.meta.linkedin);
+        if (draft.meta.tiktok !== undefined) setTiktok(draft.meta.tiktok);
+        if (draft.meta.selectedTemplateId) setSelectedTemplateId(draft.meta.selectedTemplateId);
+        if (draft.meta.step && (draft.meta.step === 1 || draft.meta.step === 2)) setStep(draft.meta.step as 1 | 2);
+      }
+      setDraftRestored(true);
+      const date = new Date(draft.savedAt);
+      setLastSavedTime(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    }
+  }, []);
+
+  // Guardado automático en tiempo real cuando cambia cualquier dato
+  useEffect(() => {
+    if (step === 3) return;
+
+    const timer = setTimeout(() => {
+      saveCardDraft(previewCard, {
+        phoneNumber,
+        email,
+        website,
+        instagram,
+        linkedin,
+        tiktok,
+        selectedTemplateId,
+        step,
+      });
+      const now = new Date();
+      setLastSavedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [
+    fullName,
+    jobTitle,
+    companyName,
+    phoneNumber,
+    email,
+    website,
+    instagram,
+    linkedin,
+    tiktok,
+    bio,
+    avatarUrl,
+    coverUrl,
+    logoUrl,
+    selectedTemplateId,
+    customPrimaryColor,
+    customBgColor,
+    customFont,
+    customRadius,
+    enableCrm,
+    step,
+  ]);
+
+  const handleDiscardDraft = () => {
+    clearCardDraft();
+    setDraftRestored(false);
+    setFullName('Alejandro Salazar');
+    setJobTitle('Director Comercial | B2B');
+    setCompanyName('ProConnect Enterprise');
+    setPhoneNumber('+58 412 555 1234');
+    setEmail('contacto@proconnect.app');
+    setWebsite('https://proconnect.app');
+    setInstagram('@proconnect.app');
+    setLinkedin('proconnect-saas');
+    setTiktok('');
+    setBio('Somos tu aliado estratégico en conectividad inteligente y transformación digital.');
+    setAvatarUrl('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400');
+    setCoverUrl('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800');
+    setLogoUrl(null);
+    setSelectedTemplateId('crimson_quote');
+    setStep(1);
+    setLastSavedTime(null);
+  };
+
+  const publishCardWithUser = async (user: { id: string; email?: string }) => {
+    setIsPublishing(true);
+    const finalizedCard: FullCard = {
+      ...previewCard,
+      user_id: user.id,
+    };
+
+    // 1. Guardar en store local
+    saveCard(finalizedCard);
+
+    // 2. Sincronizar en Supabase / API
     try {
       await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card: previewCard }),
+        body: JSON.stringify({ card: finalizedCard }),
       });
     } catch (e) {
       console.warn('Error al sincronizar tarjeta con el servidor:', e);
     }
+
+    // 3. Limpiar borrador temporal ya que la tarjeta fue publicada exitosamente
+    clearCardDraft();
+    setDraftRestored(false);
+    setIsPublishing(false);
+    setShowAuthModal(false);
     setStep(3);
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handleFinishAndSave = async () => {
+    // Verificar si el usuario ya tiene sesión activa en Supabase
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await publishCardWithUser(session.user);
+          return;
+        }
+      } catch (err) {
+        console.warn('Error verificando sesión Supabase:', err);
+      }
+    }
+
+    // Si no está autenticado, interceptar con el modal Product-Led de Registro/Login
+    setShowAuthModal(true);
   };
 
   const handleCopyUrl = async () => {
@@ -358,6 +569,38 @@ export default function CrearTarjetaPage() {
             {/* Columna Izquierda: Pasos (7 Cols) */}
             <div className="lg:col-span-7 bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
               
+              {/* Banner de Estado de Autoguardado y Borrador Recuperado */}
+              {step !== 3 && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="font-semibold text-slate-700">
+                      Guardado automático en tiempo real
+                    </span>
+                    {lastSavedTime && (
+                      <span className="text-slate-400 font-mono text-[11px]">
+                        (Última copia: {lastSavedTime})
+                      </span>
+                    )}
+                  </div>
+
+                  {draftRestored && (
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-bold text-[10px]">
+                        Borrador restaurado
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleDiscardDraft}
+                        className="text-rose-600 hover:text-rose-700 font-bold underline text-[11px]"
+                      >
+                        Descartar borrador
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* PASO 1: DATOS PERSONALES */}
               {step === 1 && (
                 <div className="space-y-5 animate-in fade-in duration-200">
@@ -442,6 +685,77 @@ export default function CrearTarjetaPage() {
                       placeholder="Ej: Somos tu aliado confiable para alcanzar tus objetivos..."
                       className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-cyan leading-relaxed"
                     />
+                  </div>
+
+                  {/* Redes Sociales y Presencia Digital */}
+                  <div className="space-y-3 pt-2 border-t border-slate-100">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-sky-500" />
+                        <span>Presencia Digital & Redes Sociales (Opcional)</span>
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Aparecerán como botones interactivos directos en tu tarjeta digital y chip NFC.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                          <Globe className="w-3 h-3 text-sky-500" />
+                          <span>Página Web Oficial</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={website}
+                          onChange={(e) => setWebsite(e.target.value)}
+                          placeholder="https://tuempresa.com"
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                          <Instagram className="w-3 h-3 text-pink-500" />
+                          <span>Instagram</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={instagram}
+                          onChange={(e) => setInstagram(e.target.value)}
+                          placeholder="@tuempresa"
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-pink-400"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                          <Linkedin className="w-3 h-3 text-blue-600" />
+                          <span>LinkedIn</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={linkedin}
+                          onChange={(e) => setLinkedin(e.target.value)}
+                          placeholder="tu-empresa-o-perfil"
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                          <Video className="w-3 h-3 text-slate-800 dark:text-white" />
+                          <span>TikTok</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={tiktok}
+                          onChange={(e) => setTiktok(e.target.value)}
+                          placeholder="@tuusuario"
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   {/* Foto de Perfil con Subida Directa */}
@@ -1016,6 +1330,15 @@ export default function CrearTarjetaPage() {
 
         </div>
       </main>
+
+      {/* Modal de Autenticación Product-Led */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={(user) => publishCardWithUser(user)}
+        title="Crea tu cuenta para publicar tu tarjeta"
+        subtitle="Tu tarjeta digital inteligente y chip NFC quedarán protegidos bajo tu usuario en Supabase con Row Level Security."
+      />
 
       <Footer />
     </div>

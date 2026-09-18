@@ -90,3 +90,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: err?.message || 'Error al guardar tarjeta' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const cardId = searchParams.get('id');
+    const slug = searchParams.get('slug')?.toLowerCase().trim();
+
+    if (!cardId && !slug) {
+      return NextResponse.json({ success: false, error: 'Se requiere id o slug' }, { status: 400 });
+    }
+
+    let cards = loadServerCards();
+    const initialLen = cards.length;
+    cards = cards.filter((c) => {
+      if (cardId && c.id === cardId) return false;
+      if (slug && c.slug?.toLowerCase().trim() === slug) return false;
+      return true;
+    });
+
+    if (cards.length === initialLen) {
+      return NextResponse.json({ success: false, error: 'Tarjeta no encontrada' }, { status: 404 });
+    }
+
+    inMemoryCards = cards;
+    persistServerCards(cards);
+
+    return NextResponse.json({ success: true, message: 'Tarjeta eliminada exitosamente' });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err?.message || 'Error al eliminar tarjeta' }, { status: 500 });
+  }
+}

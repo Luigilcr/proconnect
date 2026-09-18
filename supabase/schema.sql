@@ -260,21 +260,34 @@ CREATE TRIGGER tr_orgs_updated_at
 
 -- FunciÃ³n para sincronizar nuevos usuarios de Supabase Auth a public.users
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
+DECLARE
+    v_role user_role := 'client';
 BEGIN
+    IF LOWER(NEW.email) = 'luigicolonico@gmail.com' THEN
+        v_role := 'superadmin';
+    ELSIF NEW.raw_user_meta_data->>'role' IS NOT NULL THEN
+        BEGIN
+            v_role := (NEW.raw_user_meta_data->>'role')::user_role;
+        EXCEPTION WHEN OTHERS THEN
+            v_role := 'client';
+        END;
+    END IF;
+
     INSERT INTO public.users (id, email, full_name, role)
     VALUES (
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-        COALESCE((NEW.raw_user_meta_data->>'role')::user_role, 'client')
+        v_role
     )
     ON CONFLICT (id) DO UPDATE
     SET email = EXCLUDED.email,
-        full_name = EXCLUDED.full_name;
+        full_name = EXCLUDED.full_name,
+        role = CASE WHEN LOWER(EXCLUDED.email) = 'luigicolonico@gmail.com' THEN 'superadmin'::user_role ELSE public.users.role END;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
@@ -467,7 +480,7 @@ BEGIN
 END $$;
 
 -- ==============================================================================
--- MÓDULO PROCONNECT GASTRO — MESAS INTELIGENTES PARA RESTAURANTES
+-- Mï¿½DULO PROCONNECT GASTRO ï¿½ MESAS INTELIGENTES PARA RESTAURANTES
 -- ==============================================================================
 
 -- Mesas del restaurante
@@ -483,7 +496,7 @@ CREATE TABLE IF NOT EXISTS public.restaurant_tables (
     UNIQUE(organization_id, table_number)
 );
 
--- Categorías del menú
+-- Categorï¿½as del menï¿½
 CREATE TABLE IF NOT EXISTS public.menu_categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
@@ -492,7 +505,7 @@ CREATE TABLE IF NOT EXISTS public.menu_categories (
     position_order INT NOT NULL DEFAULT 0
 );
 
--- Platos / ítems del menú
+-- Platos / ï¿½tems del menï¿½
 CREATE TABLE IF NOT EXISTS public.menu_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     category_id UUID NOT NULL REFERENCES public.menu_categories(id) ON DELETE CASCADE,
@@ -506,7 +519,7 @@ CREATE TABLE IF NOT EXISTS public.menu_items (
     position_order INT NOT NULL DEFAULT 0
 );
 
--- Comandas / órdenes por mesa
+-- Comandas / ï¿½rdenes por mesa
 CREATE TABLE IF NOT EXISTS public.table_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     table_id UUID NOT NULL REFERENCES public.restaurant_tables(id) ON DELETE CASCADE,
@@ -524,7 +537,7 @@ CREATE TABLE IF NOT EXISTS public.table_orders (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Índices
+-- ï¿½ndices
 CREATE INDEX IF NOT EXISTS idx_rest_tables_org ON public.restaurant_tables(organization_id);
 CREATE INDEX IF NOT EXISTS idx_menu_items_cat ON public.menu_items(category_id);
 CREATE INDEX IF NOT EXISTS idx_orders_table ON public.table_orders(table_id);
@@ -537,7 +550,7 @@ CREATE TRIGGER tr_orders_updated_at
     FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
 -- ==============================================================================
--- DATOS DEMO: POLLOS MARIO — Restaurante NFC con Mesas Inteligentes
+-- DATOS DEMO: POLLOS MARIO ï¿½ Restaurante NFC con Mesas Inteligentes
 -- (Se insertan solo si no existen)
 -- ==============================================================================
 
@@ -549,7 +562,7 @@ DECLARE
     v_cat_bebidas UUID := 'c1000000-0000-0000-0000-000000000003'::UUID;
     v_cat_postres UUID := 'c1000000-0000-0000-0000-000000000004'::UUID;
 BEGIN
-    -- Nota: En producción estas semillas se insertan vía Supabase Studio o CLI.
+    -- Nota: En producciï¿½n estas semillas se insertan vï¿½a Supabase Studio o CLI.
     -- En modo demo, los datos viven en localStorage (lib/data/demo-data.ts).
     NULL;
 END $$;
