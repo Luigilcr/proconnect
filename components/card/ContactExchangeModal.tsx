@@ -85,13 +85,15 @@ export const ContactExchangeModal: React.FC<ContactExchangeModalProps> = ({
     setSubmitted(true);
   };
 
-  const cleanPhone = phone.replace(/[^\d]/g, '');
   const rawAdvisorWa = card.links?.find((l) => l.type === 'whatsapp')?.url || '';
   const cleanAdvisorDigits = rawAdvisorWa.replace(/[^\d]/g, '');
-  const advisorWhatsAppLink = rawAdvisorWa.startsWith('http')
-    ? rawAdvisorWa
-    : cleanAdvisorDigits
-    ? `https://wa.me/${cleanAdvisorDigits}`
+  const leadMsg = encodeURIComponent(
+    `Hola ${card.full_name}, soy ${name.trim() || 'un contacto'}. Acabo de dejarte mis datos a través de tu tarjeta digital ProConnect y me gustaría ponerme en contacto contigo.`
+  );
+  const advisorWhatsAppLink = cleanAdvisorDigits
+    ? `https://wa.me/${cleanAdvisorDigits}?text=${leadMsg}`
+    : rawAdvisorWa.startsWith('http')
+    ? `${rawAdvisorWa}${rawAdvisorWa.includes('?') ? '&' : '?'}text=${leadMsg}`
     : null;
 
   return (

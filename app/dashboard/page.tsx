@@ -40,6 +40,7 @@ import {
   Sparkles,
   Copy,
   Wifi,
+  Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
@@ -749,8 +750,8 @@ export default function DashboardPage() {
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
-                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                <span>6. Métricas & Leads</span>
+                <Users className="w-3.5 h-3.5 text-sky-400" />
+                <span>6. Contactos & Leads</span>
               </button>
             </div>
 

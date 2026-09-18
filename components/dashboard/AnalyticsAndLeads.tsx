@@ -30,6 +30,7 @@ import {
   FileCheck,
   Search,
   UserPlus,
+  Smartphone,
 } from 'lucide-react';
 
 interface AnalyticsAndLeadsProps {
@@ -84,6 +85,35 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
     const link = document.createElement('a');
     link.href = url;
     link.download = `${(lead.visitor_name || 'contacto').replace(/[^a-zA-Z0-9]/g, '_')}.vcf`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadAllLeadsVCard = () => {
+    if (leads.length === 0) return;
+    const allCards = leads
+      .map((lead) =>
+        [
+          'BEGIN:VCARD',
+          'VERSION:3.0',
+          `FN:${lead.visitor_name}`,
+          `N:;${lead.visitor_name};;;`,
+          lead.company_name ? `ORG:${lead.company_name}` : '',
+          lead.phone_number ? `TEL;TYPE=CELL:${lead.phone_number}` : '',
+          lead.email ? `EMAIL:${lead.email}` : '',
+          `NOTE:Contacto ProConnect (${card.full_name}) - ${lead.subject || lead.interest_notes || ''}`,
+          'END:VCARD',
+        ]
+          .filter(Boolean)
+          .join('\r\n')
+      )
+      .join('\r\n\r\n');
+
+    const blob = new Blob([allCards], { type: 'text/vcard;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `proconnect-todos-los-contactos-${card.slug}.vcf`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -274,9 +304,19 @@ export const AnalyticsAndLeads: React.FC<AnalyticsAndLeadsProps> = ({ card }) =>
             </div>
             <button
               type="button"
+              onClick={downloadAllLeadsVCard}
+              disabled={leads.length === 0}
+              className="px-3 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-sky-500/20 transition-all disabled:opacity-40 shrink-0"
+              title="Descargar todos los contactos a tu agenda del teléfono (.vcf)"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-white" />
+              <span>Guardar en Teléfono (.vcf)</span>
+            </button>
+            <button
+              type="button"
               onClick={exportLeadsCSV}
               disabled={leads.length === 0}
-              className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40"
+              className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 shrink-0"
               title="Descargar en Excel/CSV"
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />

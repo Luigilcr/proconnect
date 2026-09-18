@@ -73,7 +73,26 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
     }
     if (link.type === 'whatsapp') {
       e.preventDefault();
-      setSelectedWhatsApp(link);
+      const rawUrl = (link.url || '').trim();
+      const cleanDigits = rawUrl.replace(/[^\d]/g, '');
+      const defaultMsg = encodeURIComponent(
+        `Hola ${card.full_name}, vi tu tarjeta digital ProConnect y me gustaría ponerme en contacto contigo.`
+      );
+
+      let targetUrl = '';
+      if (rawUrl.startsWith('http')) {
+        if (rawUrl.includes('text=')) {
+          targetUrl = rawUrl;
+        } else {
+          targetUrl = `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}text=${defaultMsg}`;
+        }
+      } else if (cleanDigits) {
+        targetUrl = `https://wa.me/${cleanDigits}?text=${defaultMsg}`;
+      } else {
+        targetUrl = `https://wa.me/?text=${defaultMsg}`;
+      }
+
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
       return;
     }
     if (link.type === 'phone') {

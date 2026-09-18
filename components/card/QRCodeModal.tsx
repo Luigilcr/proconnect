@@ -59,6 +59,42 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadQRPNG = (size: number = 1024) => {
+    const svgElement = document.getElementById('proconnect-qr-svg');
+    if (!svgElement) return;
+
+    const svgData = new XMLSerializer().serializeToString(svgElement);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const img = new Image();
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    img.onload = () => {
+      // Fondo blanco limpio
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      // Margen de protección
+      const padding = size * 0.08;
+      ctx.drawImage(img, padding, padding, size - padding * 2, size - padding * 2);
+
+      const pngUrl = canvas.toDataURL('image/png');
+      const downloadLink = document.createElement('a');
+      downloadLink.href = pngUrl;
+      downloadLink.download = `qr-${cardName.toLowerCase().replace(/\s+/g, '-')}-300dpi.png`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(url);
+    };
+
+    img.src = url;
+  };
+
   // Asistente Web NFC (NDEFReader)
   const handleWriteNFC = async () => {
     if ('NDEFReader' in window) {
@@ -161,14 +197,23 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
                 </p>
               )}
 
-              {/* Botón de descarga QR */}
-              <button
-                onClick={handleDownloadQR}
-                className="w-full py-2.5 px-4 mb-3 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center gap-2 transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Descargar Código QR (SVG Vectorial)
-              </button>
+              {/* Botones de descarga QR */}
+              <div className="w-full space-y-2 mb-3">
+                <button
+                  onClick={() => handleDownloadQRPNG(1024)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold shadow-md shadow-sky-500/20 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95"
+                >
+                  <Download className="w-3.5 h-3.5 text-white" />
+                  <span>Descargar PNG (Alta Resolución 300 DPI)</span>
+                </button>
+                <button
+                  onClick={handleDownloadQR}
+                  className="w-full py-2 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Download className="w-3 h-3 text-slate-400" />
+                  <span>Descargar SVG Vectorial</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-4">

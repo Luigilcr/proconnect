@@ -11,8 +11,9 @@ import { FullCard } from '@/lib/types';
 import { getCardBySlug, getStoredOrganizations } from '@/lib/data/card-store';
 import { DigitalCard } from '@/components/card/DigitalCard';
 import { ContactExchangeModal } from '@/components/card/ContactExchangeModal';
-import { AlertCircle, ArrowLeft, Radio, ShieldAlert, UserCheck } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Radio, ShieldAlert, UserCheck, Download } from 'lucide-react';
 import Link from 'next/link';
+import { downloadVCard } from '@/lib/vcard-generator';
 
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 
@@ -223,22 +224,37 @@ export default function PublicCardProfilePage() {
   }
 
   return (
-    <main className="min-h-screen relative pb-20">
+    <main className="min-h-screen relative pb-28">
       <DigitalCard card={card} />
 
-      {/* Botón flotante para Intercambio de Contacto (Lead Capture / CRM Opcional) */}
-      {card.enable_crm_capture !== false && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-xs px-4">
+      {/* Barra Inferior Fija Ergonómica (Dual Sticky Bottom Dock) */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-md px-4 pointer-events-none">
+        <div className="p-2 rounded-2xl bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-xl border border-white/15 shadow-2xl shadow-black/70 flex items-center gap-2 pointer-events-auto">
+          {/* Botón 1: Guardar en Contactos (.vcf) */}
           <button
             type="button"
-            onClick={() => setShowExchangeModal(true)}
-            className="w-full py-3.5 px-4 rounded-2xl bg-brand-blue hover:bg-brand-mid text-white font-black text-xs shadow-2xl shadow-brand-blue/50 flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95 border border-white/20"
+            onClick={() => downloadVCard(card)}
+            className="flex-1 py-3 px-3 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 transition-all hover:scale-[1.02] active:scale-95"
+            title="Descargar contacto a la agenda de tu teléfono"
           >
-            <UserCheck className="w-4 h-4 text-brand-cyan animate-pulse" />
-            <span>🤝 Conectar / Dejar Mis Datos</span>
+            <Download className="w-4 h-4 shrink-0 text-white" />
+            <span className="truncate">Guardar Contacto</span>
           </button>
+
+          {/* Botón 2: Intercambiar Contacto / Dejar Datos */}
+          {card.enable_crm_capture !== false && (
+            <button
+              type="button"
+              onClick={() => setShowExchangeModal(true)}
+              className="flex-1 py-3 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center justify-center gap-1.5 border border-white/15 transition-all hover:scale-[1.02] active:scale-95"
+              title="Dejar tus datos para que el asesor te contacte"
+            >
+              <UserCheck className="w-4 h-4 shrink-0 text-sky-400 animate-pulse" />
+              <span className="truncate">Dejar mis datos</span>
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Modal de Intercambio de Contacto */}
       {showExchangeModal && (
