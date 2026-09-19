@@ -28,26 +28,32 @@ export function getCardExpirationInfo(
   warningDaysThreshold: number = 5
 ): CardExpirationInfo {
   const createdDate = card.created_at ? new Date(card.created_at) : new Date();
-
-  // Si no tiene fecha de vencimiento definida, calculamos 30 días desde su creación
-  let expiresDate: Date;
-  if (card.expires_at) {
-    expiresDate = new Date(card.expires_at);
-  } else {
-    expiresDate = new Date(createdDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-  }
-
-  const now = new Date();
-  const diffMs = expiresDate.getTime() - now.getTime();
-  const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
   const options: Intl.DateTimeFormatOptions = {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
   };
-
   const formattedCreated = createdDate.toLocaleDateString('es-ES', options);
+
+  // Si es tarjeta Freemium / Vitalicia (expires_at es null o plan_duration es lifetime)
+  if (!card.expires_at || (card as any).plan_duration === 'lifetime') {
+    return {
+      status: 'lifetime',
+      daysRemaining: 9999,
+      formattedCreated,
+      formattedExpires: 'Vitalicia (Sin caducidad)',
+      badgeLabel: 'Vitalicia • Freemium',
+      badgeColor: 'emerald',
+      isExpiringSoon: false,
+      isExpired: false,
+    };
+  }
+
+  const expiresDate = new Date(card.expires_at);
+  const now = new Date();
+  const diffMs = expiresDate.getTime() - now.getTime();
+  const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
   const formattedExpires = expiresDate.toLocaleDateString('es-ES', options);
 
   if (daysRemaining < 0) {

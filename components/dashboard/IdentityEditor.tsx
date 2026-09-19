@@ -5,11 +5,12 @@
 
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { FullCard } from '@/lib/types';
 import { isBrandLockedForCard } from '@/lib/data/card-store';
-import { User, Camera, Briefcase, Building2, AlignLeft, Image as ImageIcon, Link2, Lock, Shield, Upload } from 'lucide-react';
+import { User, Camera, Briefcase, Building2, AlignLeft, Image as ImageIcon, Link2, Lock, Shield, Upload, Move, Loader2 } from 'lucide-react';
 import { compressImage } from '@/lib/image-compressor';
+import { ImageCropperModal } from '@/components/common/ImageCropperModal';
 
 interface IdentityEditorProps {
   card: FullCard;
@@ -17,30 +18,46 @@ interface IdentityEditorProps {
 }
 
 export const IdentityEditor: React.FC<IdentityEditorProps> = ({ card, onChange }) => {
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [cropperOpen, setCropperOpen] = useState(false);
+  const [cropperImgSrc, setCropperImgSrc] = useState<string | null>(null);
+  const [isProcessingCrop, setIsProcessingCrop] = useState(false);
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    try {
-      const optimized = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.85 });
-      const formData = new FormData();
-      formData.append('file', optimized);
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (data.success && data.url) {
-        onChange({ profile_photo_url: data.url });
-        return;
-      }
-    } catch (err) {
-      console.warn('Error subiendo foto al servidor:', err);
-    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
-      if (dataUrl) onChange({ profile_photo_url: dataUrl });
+      if (dataUrl) {
+        setCropperImgSrc(dataUrl);
+        setCropperOpen(true);
+      }
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleCropComplete = async (croppedDataUrl: string) => {
+    onChange({ profile_photo_url: croppedDataUrl });
+    setIsProcessingCrop(true);
+    try {
+      const res = await fetch(croppedDataUrl);
+      const blob = await res.blob();
+      const file = new File([blob], `avatar-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const optimized = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.88 });
+      const formData = new FormData();
+      formData.append('file', optimized);
+      const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await uploadRes.json();
+      if (data.success && data.url) {
+        onChange({ profile_photo_url: data.url });
+      }
+    } catch (err) {
+      console.warn('Error subiendo foto centrada al servidor:', err);
+    } finally {
+      setIsProcessingCrop(false);
+    }
   };
 
   const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -219,7 +236,7 @@ export const IdentityEditor: React.FC<IdentityEditorProps> = ({ card, onChange }
                 className="sr-only"
                 onChange={handlePhotoUpload}
               />
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <label
                   htmlFor="dashboard-avatar-upload"
                   className="cursor-pointer px-3.5 py-2 bg-brand-navy hover:bg-slate-800 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-sm transition-colors"
@@ -227,16 +244,30 @@ export const IdentityEditor: React.FC<IdentityEditorProps> = ({ card, onChange }
                   <Camera className="w-3.5 h-3.5 text-brand-cyan" />
                   <span>Subir Foto</span>
                 </label>
+                {card.profile_photo_url && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCropperImgSrc(card.profile_photo_url || null);
+                      setCropperOpen(true);
+                    }}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors border border-slate-300 dark:border-slate-700 shadow-xs"
+                    title="Ajustar y centrar el rostro de la foto actual"
+                  >
+                    <Move className="w-3.5 h-3.5 text-sky-500" />
+                    <span>Ajustar Encuadre</span>
+                  </button>
+                )}
                 <input
                   type="url"
                   value={card.profile_photo_url || ''}
                   onChange={(e) => onChange({ profile_photo_url: e.target.value })}
                   placeholder="O pega una URL: https://..."
-                  className="flex-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono"
+                  className="flex-1 min-w-[140px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono"
                 />
               </div>
               <p className="text-[10px] text-slate-400">
-                Sube tu foto desde tu dispositivo o pega un enlace directo.
+                Sube tu foto desde tu dispositivo o ajusta el encuadre para evitar que se corte el rostro.
               </p>
             </div>
           </div>
@@ -324,6 +355,14 @@ export const IdentityEditor: React.FC<IdentityEditorProps> = ({ card, onChange }
           </div>
         </div>
       </div>
+
+      {/* Modal Interactivo de Recorte y Centrado Facial */}
+      <ImageCropperModal
+        isOpen={cropperOpen}
+        imageSrc={cropperImgSrc || card.profile_photo_url || ''}
+        onClose={() => setCropperOpen(false)}
+        onCropComplete={handleCropComplete}
+      />
     </div>
   );
 };

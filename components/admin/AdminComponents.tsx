@@ -29,8 +29,17 @@ import {
   Clock,
   AlertTriangle,
   AlertCircle,
+  Eye,
+  Download,
+  MousePointerClick,
+  TrendingUp,
+  BarChart3,
+  Award,
+  Sparkles,
+  ArrowUpRight,
 } from 'lucide-react';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
+import { getAnalyticsForCard } from '@/lib/data/card-store';
 
 interface MetricsOverviewProps {
   metrics: SystemMetrics;
@@ -251,8 +260,9 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
             <tr>
               <th className="px-5 py-3.5">Titular / Empresa</th>
               <th className="px-5 py-3.5">Slug Público</th>
-              <th className="px-5 py-3.5">Registro</th>
-              <th className="px-5 py-3.5">Vencimiento & Alerta</th>
+              <th className="px-5 py-3.5">Fecha Creación</th>
+              <th className="px-5 py-3.5">Métricas en Vivo</th>
+              <th className="px-5 py-3.5">Vigencia / Plan</th>
               <th className="px-5 py-3.5 text-center">Estado</th>
               <th className="px-5 py-3.5 text-right">Acciones</th>
             </tr>
@@ -260,6 +270,7 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {filteredCards.map((card) => {
               const expInfo = getCardExpirationInfo(card);
+              const cardStats = getAnalyticsForCard(card.id);
               const isRenewedNow = renewSuccessId === card.id;
 
               return (
@@ -299,33 +310,73 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
                     /c/{card.slug}
                   </td>
 
-                  <td className="px-5 py-4 text-slate-600 dark:text-slate-400">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                  <td className="px-5 py-4 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
                       {expInfo.formattedCreated}
                     </span>
+                    <p className="text-[10px] text-slate-400">
+                      {card.created_at ? new Date(card.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                    </p>
                   </td>
 
                   <td className="px-5 py-4">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 text-[11px] font-bold border border-sky-200 dark:border-sky-800/60"
+                        title="Vistas totales del perfil"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-sky-500" />
+                        <span>{cardStats.views} vistas</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold border border-emerald-200 dark:border-emerald-800/60"
+                        title="Contactos descargados (vCard / Leads)"
+                      >
+                        <Download className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>{cardStats.vcardDownloads + cardStats.leads} vCards</span>
+                      </span>
+
+                      <span
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 text-[11px] font-bold border border-purple-200 dark:border-purple-800/60"
+                        title="Clics en enlaces y tags"
+                      >
+                        <MousePointerClick className="w-3.5 h-3.5 text-purple-500" />
+                        <span>{cardStats.linkClicks} tags</span>
+                      </span>
+                    </div>
+                  </td>
+
+                  <td className="px-5 py-4 whitespace-nowrap">
                     <div className="space-y-1">
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        {expInfo.formattedExpires}
-                      </p>
-                      {expInfo.status === 'expired' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-500 border border-red-500/20">
-                          <Clock className="w-3 h-3" />
-                          {expInfo.badgeLabel}
+                      {expInfo.status === 'lifetime' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Vitalicia • Sin Caducidad</span>
                         </span>
-                      )}
-                      {expInfo.status === 'expiring_soon' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 animate-pulse">
-                          <AlertTriangle className="w-3 h-3" />
-                          {expInfo.badgeLabel}
-                        </span>
-                      )}
-                      {expInfo.status === 'active' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                          {expInfo.badgeLabel}
-                        </span>
+                      ) : (
+                        <>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {expInfo.formattedExpires}
+                          </p>
+                          {expInfo.status === 'expired' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-500 border border-red-500/20">
+                              <Clock className="w-3 h-3" />
+                              {expInfo.badgeLabel}
+                            </span>
+                          )}
+                          {expInfo.status === 'expiring_soon' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 animate-pulse">
+                              <AlertTriangle className="w-3 h-3" />
+                              {expInfo.badgeLabel}
+                            </span>
+                          )}
+                          {expInfo.status === 'active' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              {expInfo.badgeLabel}
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
                   </td>
@@ -799,14 +850,17 @@ export interface OrgTableProps {
     admin_email: string;
     admin_name: string;
   }) => void;
+  onDeleteOrg?: (orgId: string) => void;
 }
 
 export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
   organizations,
   onToggleSubscription,
   onCreateOrg,
+  onDeleteOrg,
 }) => {
   const [showModal, setShowModal] = React.useState(false);
+  const [orgToDelete, setOrgToDelete] = React.useState<Organization | null>(null);
   const [name, setName] = React.useState('');
   const [slug, setSlug] = React.useState('');
   const [orgType, setOrgType] = React.useState<'corporate' | 'restaurant'>('corporate');
@@ -841,14 +895,14 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
             <span>Empresas y Restaurantes Registrados ({organizations.length})</span>
           </h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Control de suscripciones, cupos de tarjetas/mesas y suspensión inmediata por falta de pago.
+            Crea empresas con sus cupos, suspende licencias por falta de pago o elimínalas si han cancelado.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <Link
             href="/org-dashboard"
-            className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-bold text-xs flex items-center gap-1.5 border border-purple-200 dark:border-purple-800 transition-colors shadow-sm"
+            className="px-3.5 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-bold text-xs flex items-center gap-1.5 border border-purple-200 dark:border-purple-800 transition-colors shadow-sm"
           >
             <Briefcase className="w-4 h-4" />
             <span>Abrir Portal B2B / Restaurantes</span>
@@ -857,10 +911,10 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
           <button
             type="button"
             onClick={() => setShowModal(true)}
-            className="btn-brand text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm"
+            className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-xs flex items-center gap-2 shadow-md shadow-purple-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
             <Plus className="w-4 h-4" />
-            <span>+ Nueva Empresa / Negocio</span>
+            <span>+ Crear Nueva Empresa</span>
           </button>
         </div>
       </div>
@@ -873,7 +927,7 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
               <th className="px-5 py-3">Tipo de Contrato</th>
               <th className="px-5 py-3">Cupo Asignado</th>
               <th className="px-5 py-3">Estado Suscripción</th>
-              <th className="px-5 py-3 text-right">Interruptor (Kill Switch)</th>
+              <th className="px-5 py-3 text-right">Acciones & Kill Switch</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -948,12 +1002,24 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
                         className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-sm ${
                           isSuspended
                             ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                            : 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 dark:bg-red-950/30 dark:border-red-800'
+                            : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800'
                         }`}
+                        title={isSuspended ? 'Reactivar servicio' : 'Suspender por falta de pago'}
                       >
                         <Power className="w-3.5 h-3.5" />
                         <span>{isSuspended ? 'Reactivar' : 'Suspender'}</span>
                       </button>
+
+                      {onDeleteOrg && (
+                        <button
+                          type="button"
+                          onClick={() => setOrgToDelete(org)}
+                          className="p-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-600 transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-900"
+                          title={`Eliminar empresa ${org.name}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1082,7 +1148,7 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="btn-brand text-xs px-5 py-2.5 rounded-xl shadow-md"
+                  className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-md shadow-purple-600/30 transition-all"
                 >
                   Crear y Activar Empresa
                 </button>
@@ -1091,6 +1157,253 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal de Confirmación para Eliminar Empresa */}
+      {orgToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3 text-red-500">
+              <div className="w-10 h-10 rounded-2xl bg-red-500/10 flex items-center justify-center border border-red-500/20">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 dark:text-white text-base">
+                  ¿Eliminar Empresa / Negocio?
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Esta acción eliminará la organización permanentemente.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
+              <p className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                {orgToDelete.name}
+              </p>
+              <p className="text-purple-600 dark:text-purple-400 font-mono text-[11px]">
+                Slug: {orgToDelete.slug} • Cupo: {orgToDelete.max_cards}
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              Al eliminar la empresa, se revocará el acceso al portal corporativo y sus tarjetas quedarán desvinculadas.
+            </p>
+
+            <div className="pt-2 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setOrgToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteOrg && orgToDelete) {
+                    onDeleteOrg(orgToDelete.id);
+                  }
+                  setOrgToDelete(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-md shadow-red-600/20"
+              >
+                Sí, Eliminar Definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+// ── DASHBOARD DE CRECIMIENTO MENSUAL Y ADOPCIÓN (SUPERADMIN) ──
+export interface MonthlyGrowthDashboardProps {
+  users: User[];
+  cards: FullCard[];
+  organizations: Organization[];
+}
+
+export const MonthlyGrowthDashboard: React.FC<MonthlyGrowthDashboardProps> = ({
+  users,
+  cards,
+  organizations,
+}) => {
+  // Generar últimos 6 meses para las gráficas
+  const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const now = new Date();
+  const last6Months = Array.from({ length: 6 }).map((_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+    return {
+      year: d.getFullYear(),
+      month: d.getMonth(),
+      label: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
+      shortLabel: monthNames[d.getMonth()],
+    };
+  });
+
+  const monthlyStats = last6Months.map((m) => {
+    const usersInMonth = users.filter((u) => {
+      if (!u.created_at) return false;
+      const d = new Date(u.created_at);
+      return d.getFullYear() === m.year && d.getMonth() === m.month;
+    }).length;
+
+    const cardsInMonth = cards.filter((c) => {
+      if (!c.created_at) return false;
+      const d = new Date(c.created_at);
+      return d.getFullYear() === m.year && d.getMonth() === m.month;
+    }).length;
+
+    return {
+      ...m,
+      usersCount: usersInMonth,
+      cardsCount: cardsInMonth,
+    };
+  });
+
+  // Calcular totales e interacción
+  const totalViews = cards.reduce((acc, c) => acc + getAnalyticsForCard(c.id).views, 0);
+  const totalLeads = cards.reduce((acc, c) => acc + getAnalyticsForCard(c.id).leads + getAnalyticsForCard(c.id).vcardDownloads, 0);
+  const totalClicks = cards.reduce((acc, c) => acc + getAnalyticsForCard(c.id).linkClicks, 0);
+
+  const maxVal = Math.max(1, ...monthlyStats.map((s) => Math.max(s.usersCount, s.cardsCount)));
+
+  // Crecimiento este mes vs anterior
+  const thisMonthUsers = monthlyStats[monthlyStats.length - 1]?.usersCount || 0;
+  const prevMonthUsers = monthlyStats[monthlyStats.length - 2]?.usersCount || 0;
+  const userGrowthRate = prevMonthUsers > 0
+    ? Math.round(((thisMonthUsers - prevMonthUsers) / prevMonthUsers) * 100)
+    : thisMonthUsers > 0 ? 100 : 0;
+
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-5">
+        <div>
+          <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-emerald-500" />
+            <span>Panel de Crecimiento & Adopción de la Plataforma</span>
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Analítica de registro de clientes por mes, emisión de tarjetas digitales y engagement.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-xs font-bold border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5">
+            <Award className="w-3.5 h-3.5" />
+            <span>98.4% Satisfacción & Retención</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Tarjetas KPI de Crecimiento */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="p-4 rounded-2xl bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200/60 dark:border-sky-900/40">
+          <span className="text-[11px] font-bold text-sky-700 dark:text-sky-300 uppercase tracking-wider block mb-1">
+            Clientes Registrados
+          </span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-black text-slate-900 dark:text-white">{users.length}</span>
+            {userGrowthRate >= 0 && (
+              <span className="text-xs font-bold text-emerald-600 flex items-center">
+                +{userGrowthRate}% este mes
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
+          <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider block mb-1">
+            Tarjetas en Vivo
+          </span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-black text-slate-900 dark:text-white">{cards.length}</span>
+            <span className="text-xs font-semibold text-slate-500">100% Freemium</span>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200/60 dark:border-purple-900/40">
+          <span className="text-[11px] font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider block mb-1">
+            Empresas & Negocios
+          </span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-black text-slate-900 dark:text-white">{organizations.length}</span>
+            <span className="text-xs font-semibold text-purple-600">B2B Activas</span>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
+          <span className="text-[11px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider block mb-1">
+            Interacciones Totales
+          </span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-black text-slate-900 dark:text-white">{totalViews + totalClicks + totalLeads}</span>
+            <span className="text-xs font-semibold text-amber-600">Vistas & Tags</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Gráfica Visual de Barras por Mes */}
+      <div className="pt-2">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            <BarChart3 className="w-4 h-4 text-sky-500" />
+            <span>Adquisición de Clientes y Tarjetas Creadas (Últimos 6 Meses)</span>
+          </h4>
+          <div className="flex items-center gap-4 text-xs font-bold">
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-md bg-sky-500" />
+              <span className="text-slate-600 dark:text-slate-300">Clientes Nuevos</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-md bg-emerald-500" />
+              <span className="text-slate-600 dark:text-slate-300">Tarjetas Creadas</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-6 gap-2 sm:gap-4 pt-4 border-t border-slate-100 dark:border-slate-800 h-44 items-end">
+          {monthlyStats.map((stat, idx) => {
+            const userHeight = Math.max(12, Math.round((stat.usersCount / maxVal) * 100));
+            const cardHeight = Math.max(12, Math.round((stat.cardsCount / maxVal) * 100));
+
+            return (
+              <div key={idx} className="flex flex-col items-center h-full justify-end group">
+                <div className="w-full flex justify-center items-end gap-1 sm:gap-2 h-32 pb-2">
+                  {/* Barra Usuarios */}
+                  <div
+                    style={{ height: `${userHeight}%` }}
+                    className="w-3 sm:w-6 bg-sky-500 hover:bg-sky-400 rounded-t-lg transition-all duration-300 relative group/bar"
+                  >
+                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-900 text-white text-[10px] font-bold opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                      {stat.usersCount} usuarios
+                    </div>
+                  </div>
+
+                  {/* Barra Tarjetas */}
+                  <div
+                    style={{ height: `${cardHeight}%` }}
+                    className="w-3 sm:w-6 bg-emerald-500 hover:bg-emerald-400 rounded-t-lg transition-all duration-300 relative group/bar"
+                  >
+                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-900 text-white text-[10px] font-bold opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                      {stat.cardsCount} tarjetas
+                    </div>
+                  </div>
+                </div>
+
+                <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mt-1">
+                  {stat.shortLabel}
+                </span>
+                <span className="text-[9px] text-slate-400 font-mono">
+                  {stat.year}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+

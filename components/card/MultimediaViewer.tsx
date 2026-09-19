@@ -172,14 +172,26 @@ export const MultimediaViewer: React.FC<MultimediaViewerProps> = ({
             {/* Modal Content */}
             <div className="p-4 bg-slate-950 flex items-center justify-center min-h-[320px]">
               {activeModalItem.file_type === 'video_embed' ? (
-                <div className="w-full aspect-video rounded-xl overflow-hidden">
-                  <iframe
-                    src={getEmbedVideoUrl(activeModalItem.file_url)}
-                    title={activeModalItem.title}
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    className="w-full h-full border-0"
-                  />
+                <div className="w-full aspect-video rounded-xl overflow-hidden flex items-center justify-center bg-black">
+                  {activeModalItem.file_url.toLowerCase().includes('.mp4') ||
+                  activeModalItem.file_url.toLowerCase().includes('.mov') ||
+                  activeModalItem.file_url.startsWith('data:video') ? (
+                    <video
+                      src={activeModalItem.file_url}
+                      controls
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-contain rounded-xl"
+                    />
+                  ) : (
+                    <iframe
+                      src={getEmbedVideoUrl(activeModalItem.file_url)}
+                      title={activeModalItem.title}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="w-full h-full border-0"
+                    />
+                  )}
                 </div>
               ) : activeModalItem.file_type === 'image' ? (
                 <img

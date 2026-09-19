@@ -582,6 +582,24 @@ export function createNewOrganization(
 }
 
 /**
+ * Elimina una organización del almacén local
+ */
+export function deleteStoredOrganization(orgId: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const orgs = getStoredOrganizations();
+    const filtered = orgs.filter((o) => o.id !== orgId && o.slug !== orgId);
+    if (filtered.length !== orgs.length) {
+      localStorage.setItem(STORAGE_ORGS_KEY, JSON.stringify(filtered));
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Elimina un lead (Exclusivo para Administrador de Empresa o Superadmin)
  */
 export function deleteLead(leadId: string): boolean {

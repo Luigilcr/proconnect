@@ -42,6 +42,7 @@ import {
   Copy,
   Wifi,
   Users,
+  BarChart3,
 } from 'lucide-react';
 import Link from 'next/link';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
@@ -695,7 +696,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Layout en Pantalla Dividida (Split Screen en Desktop) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mt-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mt-6 items-start">
           {/* Columna Izquierda: Pestañas y Formularios de Edición (Col 7/12) */}
           <div className={`lg:col-span-7 ${showMobilePreview ? 'hidden lg:block' : 'block'}`}>
             {/* Navegación por Pestañas (Totalmente accesible en PC con mouse y táctil) */}
@@ -768,13 +769,13 @@ export default function DashboardPage() {
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
-                <Users className="w-3.5 h-3.5 text-sky-400" />
-                <span>6. Contactos & Leads</span>
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>6. Métricas & Leads</span>
               </button>
             </div>
 
-            {/* Contenedor del Formulario Activo */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-sm">
+            {/* Contenido Dinámico de la Pestaña Activa */}
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
               {activeTab === 'identity' && (
                 <IdentityEditor card={currentCard} onChange={handleCardUpdate} />
               )}
@@ -804,9 +805,9 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Columna Derecha: Simulador de Smartphone en Vivo (Col 5/12) */}
+          {/* Columna Derecha: Simulador de Smartphone en Vivo (Col 5/12) Fijado en PC */}
           <div
-            className={`lg:col-span-5 flex justify-center ${
+            className={`lg:col-span-5 sticky top-24 self-start flex justify-center ${
               showMobilePreview ? 'block' : 'hidden lg:flex'
             }`}
           >

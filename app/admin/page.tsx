@@ -16,15 +16,18 @@ import {
   updateUserRole,
   toggleOrganizationSubscription,
   createNewOrganization,
+  deleteStoredOrganization,
   deleteCard,
   renewCardSubscription,
   persistCards,
+  getAnalyticsForCard,
 } from '@/lib/data/card-store';
 import {
   MetricsOverview,
   CardManagementTable,
   UserManagementTable,
   OrganizationManagementTable,
+  MonthlyGrowthDashboard,
 } from '@/components/admin/AdminComponents';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
@@ -132,15 +135,21 @@ export default function SuperadminPage() {
     setCards(finalCards);
     setOrganizations(finalOrgs);
 
+    const totalV = finalCards.reduce((acc, c) => acc + getAnalyticsForCard(c.id).views, 0);
+    const totalL = finalCards.reduce(
+      (acc, c) => acc + getAnalyticsForCard(c.id).leads + getAnalyticsForCard(c.id).vcardDownloads,
+      0
+    );
+
     setMetrics({
       totalUsers: finalUsers.length,
       totalOrganizations: finalOrgs.length,
       totalCards: finalCards.length,
       activeCards: finalCards.filter((c) => c.is_active).length,
       totalLinks: finalCards.reduce((acc, c) => acc + (c.links?.length || 0), 0),
-      totalMultimedia: 0,
-      totalViews: 0,
-      totalLeads: 0,
+      totalMultimedia: finalCards.reduce((acc, c) => acc + (c.multimedia?.length || 0), 0),
+      totalViews: totalV,
+      totalLeads: totalL,
     });
   };
 
@@ -258,6 +267,19 @@ export default function SuperadminPage() {
     loadData();
   };
 
+  const handleDeleteOrg = async (orgId: string) => {
+    deleteStoredOrganization(orgId);
+    setOrganizations((prev) => prev.filter((o) => o.id !== orgId));
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('organizations').delete().eq('id', orgId);
+      } catch (err) {
+        console.warn('Error eliminando organización en Supabase:', err);
+      }
+    }
+    loadData();
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       <Navbar />
@@ -319,12 +341,22 @@ export default function SuperadminPage() {
           <MetricsOverview metrics={metrics} />
         </section>
 
-        {/* 2. Empresas, Clientes Corporativos y Restaurantes */}
+        {/* 2. Crecimiento Mensual y Adopción */}
+        <section>
+          <MonthlyGrowthDashboard
+            users={users}
+            cards={cards}
+            organizations={organizations}
+          />
+        </section>
+
+        {/* 3. Empresas, Clientes Corporativos y Restaurantes */}
         <section>
           <OrganizationManagementTable
             organizations={organizations}
             onToggleSubscription={handleToggleOrgSubscription}
             onCreateOrg={handleCreateOrg}
+            onDeleteOrg={handleDeleteOrg}
           />
         </section>
 

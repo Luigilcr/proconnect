@@ -18,12 +18,14 @@ import { Footer } from '@/components/layout/Footer';
 import { PRESET_TEMPLATES } from '@/lib/data/demo-data';
 import { DigitalCard } from '@/components/card/DigitalCard';
 import { saveCard } from '@/lib/data/card-store';
-import { FullCard, PresetTemplate } from '@/lib/types';
+import { FullCard, PresetTemplate, CatalogMultimedia } from '@/lib/types';
 import { saveCardDraft, loadCardDraft, clearCardDraft } from '@/lib/draft-store';
 import { AuthModal } from '@/components/auth/AuthModal';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { compressImage } from '@/lib/image-compressor';
 import { normalizeCardForDatabase, isSuperAdminEmail, getSupabaseCardPayload } from '@/lib/db-normalize';
+import { ImageCropperModal } from '@/components/common/ImageCropperModal';
+import { MultimediaManager } from '@/components/dashboard/MultimediaManager';
 import {
   Sparkles,
   ArrowRight,
@@ -61,6 +63,8 @@ import {
   RefreshCw,
   LogOut,
   MailCheck,
+  Move,
+  Film,
 } from 'lucide-react';
 
 export default function CrearTarjetaPage() {
@@ -78,8 +82,11 @@ export default function CrearTarjetaPage() {
   const [tiktok, setTiktok] = useState('');
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400');
+  const [cropperOpen, setCropperOpen] = useState(false);
+  const [cropperImgSrc, setCropperImgSrc] = useState<string | null>(null);
   const [coverUrl, setCoverUrl] = useState('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [multimedia, setMultimedia] = useState<CatalogMultimedia[]>([]);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [uploadCoverMessage, setUploadCoverMessage] = useState<string | null>(null);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -276,7 +283,7 @@ export default function CrearTarjetaPage() {
           ]
         : []),
     ],
-    multimedia: [],
+    multimedia: multimedia,
   };
 
   const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -353,40 +360,45 @@ export default function CrearTarjetaPage() {
     { label: '✨ Gradiente Azul', url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=800' },
   ];
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      if (ev.target?.result) {
+        setCropperImgSrc(ev.target.result as string);
+        setCropperOpen(true);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleCropComplete = async (croppedDataUrl: string) => {
+    setAvatarUrl(croppedDataUrl);
+    setUploadMessage('¡Foto encuadrada y centrada!');
     setIsUploading(true);
-    setUploadMessage('Optimizando y procesando foto...');
 
     try {
-      const optimizedFile = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.85 });
+      const res = await fetch(croppedDataUrl);
+      const blob = await res.blob();
+      const file = new File([blob], `avatar-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const optimized = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.88 });
       const formData = new FormData();
-      formData.append('file', optimizedFile);
+      formData.append('file', optimized);
 
-      const res = await fetch('/api/upload', {
+      const uploadRes = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
       });
 
-      const data = await res.json();
+      const data = await uploadRes.json();
       if (data.success && data.url) {
         setAvatarUrl(data.url);
-        setUploadMessage('¡Foto optimizada y lista!');
-      } else {
-        throw new Error(data.error || 'Error en subida');
       }
     } catch (err) {
-      console.warn('Fallback a lectura local:', err);
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          setAvatarUrl(ev.target.result as string);
-          setUploadMessage('¡Foto cargada en tarjeta!');
-        }
-      };
-      reader.readAsDataURL(file);
+      console.warn('Fallback a avatar recortado local en memoria:', err);
     } finally {
       setIsUploading(false);
     }
@@ -416,6 +428,9 @@ export default function CrearTarjetaPage() {
       if (draft.card.font_family) setCustomFont(draft.card.font_family);
       if (draft.card.border_radius) setCustomRadius(draft.card.border_radius);
       if (draft.card.enable_crm_capture !== undefined) setEnableCrm(draft.card.enable_crm_capture);
+      if (draft.card.multimedia && Array.isArray(draft.card.multimedia)) {
+        setMultimedia(draft.card.multimedia);
+      }
       if (draft.meta) {
         if (draft.meta.phoneNumber !== undefined) setPhoneNumber(draft.meta.phoneNumber);
         if (draft.meta.email !== undefined) setEmail(draft.meta.email);
@@ -480,6 +495,7 @@ export default function CrearTarjetaPage() {
     setTiktok('');
     setBio('');
     setLogoUrl(null);
+    setMultimedia([]);
     setDraftRestored(false);
     setLastSavedTime(null);
     setResetToast(true);
@@ -602,6 +618,7 @@ export default function CrearTarjetaPage() {
     avatarUrl,
     coverUrl,
     logoUrl,
+    multimedia,
     selectedTemplateId,
     customPrimaryColor,
     customBgColor,
@@ -627,6 +644,7 @@ export default function CrearTarjetaPage() {
     setAvatarUrl('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400');
     setCoverUrl('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800');
     setLogoUrl(null);
+    setMultimedia([]);
     setSelectedTemplateId('crimson_quote');
     setStep(1);
     setLastSavedTime(null);
@@ -1319,6 +1337,21 @@ export default function CrearTarjetaPage() {
                             )}
                             <span>{isUploading ? 'Subiendo...' : 'Elegir Foto (Galería o Celular)'}</span>
                           </label>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (avatarUrl) {
+                                setCropperImgSrc(avatarUrl);
+                                setCropperOpen(true);
+                              }
+                            }}
+                            className="cursor-pointer px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-all shadow-sm select-none"
+                            title="Ajustar encuadre y centrar rostro"
+                          >
+                            <Move className="w-3.5 h-3.5 text-brand-blue" />
+                            <span>Ajustar Encuadre</span>
+                          </button>
                         </div>
 
                         {uploadMessage && (
@@ -1479,6 +1512,15 @@ export default function CrearTarjetaPage() {
                         )}
                       </div>
                     </div>
+                  </div>
+
+                  {/* Catálogo y Archivos Multimedia (MP4, PDF, Imágenes) */}
+                  <div className="space-y-2 pt-4 border-t border-slate-100">
+                    <MultimediaManager
+                      items={multimedia}
+                      cardId={previewCard.id}
+                      onChange={setMultimedia}
+                    />
                   </div>
 
                   <div className="pt-4 flex justify-end">
@@ -2032,7 +2074,7 @@ export default function CrearTarjetaPage() {
             </div>
 
             {/* Columna Derecha: Teléfono Inteligente en Vivo (5 Cols) */}
-            <div className={`lg:col-span-5 flex flex-col items-center sticky top-8 ${step === 2 ? 'hidden lg:flex' : 'flex'}`}>
+            <div className={`lg:col-span-5 flex flex-col items-center sticky top-24 self-start ${step === 2 ? 'hidden lg:flex' : 'flex'}`}>
               <div className="flex items-center justify-between w-full max-w-[340px] sm:max-w-[360px] mb-2 px-2">
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -2130,6 +2172,16 @@ export default function CrearTarjetaPage() {
         onSuccess={(user) => publishCardWithUser(user)}
         title="Crea tu cuenta para publicar tu tarjeta"
         subtitle="Tu tarjeta digital inteligente y chip NFC quedarán protegidos bajo tu usuario en Supabase con Row Level Security."
+      />
+
+      {/* Modal de Recorte y Enfoque de Rostro */}
+      <ImageCropperModal
+        isOpen={cropperOpen}
+        imageSrc={cropperImgSrc || avatarUrl}
+        onClose={() => setCropperOpen(false)}
+        onCropComplete={handleCropComplete}
+        title="Ajustar y Centrar Foto de Perfil"
+        shape="rounded"
       />
 
       <Footer />
