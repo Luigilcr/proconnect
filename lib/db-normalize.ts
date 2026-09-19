@@ -5,10 +5,7 @@ export function isSuperAdminEmail(email?: string | null): boolean {
   const e = email.toLowerCase().trim();
   return (
     e === 'luigicolonico@gmail.com' ||
-    e === 'asesordeseguridad.luigilcr@gmail.com' ||
-    e === 'admin@proconnect.app' ||
-    e.includes('luigilcr') ||
-    e.includes('luigicolonico')
+    e === 'admin@proconnect.app'
   );
 }
 

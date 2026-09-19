@@ -53,13 +53,11 @@ export async function middleware(req: NextRequest) {
       return redirectToLogin(req, pathname);
     }
 
-    // Superadmin garantizado para el dueño (ambas cuentas)
+    // Superadmin garantizado para el dueño
     const normalizedEmail = user.email?.toLowerCase().trim() || '';
     if (
       normalizedEmail === 'luigicolonico@gmail.com' ||
-      normalizedEmail === 'asesordeseguridad.luigilcr@gmail.com' ||
-      normalizedEmail === 'admin@proconnect.app' ||
-      normalizedEmail.includes('luigilcr')
+      normalizedEmail === 'admin@proconnect.app'
     ) {
       return res;
     }

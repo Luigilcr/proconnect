@@ -19,10 +19,15 @@ EXCEPTION
     WHEN undefined_object THEN null;
 END $$;
 
--- 2. ASCENDER A LUIGI COLONICO A SUPERADMIN EN PUBLIC.USERS
+-- 2. ASEGURAR SUPERADMIN SOLO PARA CUENTAS ADMINISTRATIVAS OFICIALES
 UPDATE public.users
 SET role = 'superadmin'::user_role
-WHERE LOWER(email) IN ('asesordeseguridad.luigilcr@gmail.com', 'luigicolonico@gmail.com');
+WHERE LOWER(email) IN ('luigicolonico@gmail.com', 'admin@proconnect.app');
+
+-- Mantener cuenta de pruebas como cliente
+UPDATE public.users
+SET role = 'client'::user_role
+WHERE LOWER(email) = 'asesordeseguridad.luigilcr@gmail.com';
 
 -- 3. FUNCIÓN RPC: save_public_card (SECURITY DEFINER)
 CREATE OR REPLACE FUNCTION public.save_public_card(p_card JSONB)
@@ -51,9 +56,8 @@ BEGIN
     v_email := LOWER(TRIM(COALESCE(p_card->>'user_email', p_card->>'email', '')));
     v_full_name := COALESCE(p_card->>'full_name', 'Usuario ProConnect');
 
-    -- Determinar si es superadmin
+    -- Determinar si es superadmin (solo cuentas oficiales)
     v_is_superadmin := (
-        v_email = 'asesordeseguridad.luigilcr@gmail.com' OR 
         v_email = 'luigicolonico@gmail.com' OR 
         v_email = 'admin@proconnect.app'
     );
