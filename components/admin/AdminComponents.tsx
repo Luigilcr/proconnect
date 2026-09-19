@@ -268,7 +268,14 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {filteredCards.map((card) => {
+            {filteredCards.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-5 py-12 text-center text-slate-400 dark:text-slate-500 text-xs">
+                  No hay tarjetas digitales registradas en este estado.
+                </td>
+              </tr>
+            ) : (
+              filteredCards.map((card) => {
               const expInfo = getCardExpirationInfo(card);
               const cardStats = getAnalyticsForCard(card.id);
               const isRenewedNow = renewSuccessId === card.id;
@@ -446,7 +453,7 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
                   </td>
                 </tr>
               );
-            })}
+            }))}
           </tbody>
         </table>
       </div>
@@ -725,11 +732,18 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {users.map((user) => (
-              <tr
-                key={user.id}
-                className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
-              >
+            {users.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-8 text-center text-slate-400 dark:text-slate-500 text-xs">
+                  No hay usuarios registrados en el sistema todavía.
+                </td>
+              </tr>
+            ) : (
+              users.map((user) => (
+                <tr
+                  key={user.id}
+                  className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
+                >
                 <td className="px-5 py-3.5 font-bold text-slate-900 dark:text-white">
                   {user.full_name || 'Sin nombre'}
                 </td>
@@ -788,7 +802,7 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
                   </div>
                 </td>
               </tr>
-            ))}
+            )))}
           </tbody>
         </table>
       </div>
@@ -931,7 +945,32 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {organizations.map((org) => {
+            {organizations.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-12 text-center">
+                  <div className="max-w-sm mx-auto space-y-3">
+                    <div className="w-12 h-12 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 flex items-center justify-center mx-auto border border-purple-200 dark:border-purple-800">
+                      <Building2 className="w-6 h-6" />
+                    </div>
+                    <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                      No hay empresas registradas todavía
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Da de alta tu primer cliente corporativo B2B o cadena de restaurantes para emitir tarjetas o menús con marca unificada.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowModal(true)}
+                      className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-sm transition-all"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Crear Primera Empresa</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              organizations.map((org) => {
               const isSuspended = org.subscription_status === 'suspended';
               const isRestaurant = org.org_type === 'restaurant' || org.slug === 'brasa-criolla';
 
@@ -1024,7 +1063,7 @@ export const OrganizationManagementTable: React.FC<OrgTableProps> = ({
                   </td>
                 </tr>
               );
-            })}
+            }))}
           </tbody>
         </table>
       </div>

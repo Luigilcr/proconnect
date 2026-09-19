@@ -9,20 +9,15 @@ import { normalizeCardForDatabase } from '@/lib/db-normalize';
 const DATA_FILE = path.join(process.cwd(), 'data', 'cards.json');
 
 // In-memory fallback
-let inMemoryCards: FullCard[] = [...DEMO_CARDS];
+let inMemoryCards: FullCard[] = [];
 
 function loadServerCards(): FullCard[] {
   try {
     if (fs.existsSync(DATA_FILE)) {
       const raw = fs.readFileSync(DATA_FILE, 'utf-8').replace(/^\uFEFF/, '').trim();
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const map = new Map<string, FullCard>();
-        DEMO_CARDS.forEach((c) => map.set(c.slug.toLowerCase().trim(), c));
-        parsed.forEach((c: FullCard) => {
-          if (c && c.slug) map.set(c.slug.toLowerCase().trim(), c);
-        });
-        inMemoryCards = Array.from(map.values());
+      if (Array.isArray(parsed)) {
+        inMemoryCards = parsed;
         return inMemoryCards;
       }
     }
@@ -70,6 +65,21 @@ export async function GET(request: NextRequest) {
       }
     } catch (err) {
       console.warn('Error querying Supabase in /api/cards:', err);
+    }
+  }
+
+  // 1.1 Si no se pide un slug específico y Supabase está habilitado, traer todas las tarjetas reales
+  if (!slug && isSupabaseEnabled && supabase) {
+    try {
+      const { data: sbCards, error } = await supabase
+        .from('cards')
+        .select('*, links:card_links(*)')
+        .order('created_at', { ascending: false });
+      if (!error && Array.isArray(sbCards) && sbCards.length > 0) {
+        return NextResponse.json({ success: true, cards: sbCards });
+      }
+    } catch (err) {
+      console.warn('Error fetching all cards from Supabase:', err);
     }
   }
 

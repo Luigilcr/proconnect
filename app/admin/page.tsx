@@ -21,6 +21,11 @@ import {
   renewCardSubscription,
   persistCards,
   getAnalyticsForCard,
+  purgeAllDemoData,
+  DEMO_CARD_SLUGS,
+  DEMO_USER_EMAILS,
+  DEMO_ORG_SLUGS,
+  DEMO_ORG_IDS,
 } from '@/lib/data/card-store';
 import {
   MetricsOverview,
@@ -33,13 +38,13 @@ import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { isSuperAdminEmail } from '@/lib/db-normalize';
-import { ShieldCheck, RefreshCw, AlertCircle, Filter, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, RefreshCw, AlertCircle, Filter, CheckCircle2, Trash2, Database, Check } from 'lucide-react';
 
 export default function SuperadminPage() {
   const [cards, setCards] = useState<FullCard[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [hideDemoData, setHideDemoData] = useState<boolean>(true);
+  const [purgeToast, setPurgeToast] = useState<boolean>(false);
   const [metrics, setMetrics] = useState<SystemMetrics>({
     totalUsers: 0,
     totalOrganizations: 0,
@@ -51,7 +56,26 @@ export default function SuperadminPage() {
     totalLeads: 0,
   });
 
+  const handlePurgeDemos = () => {
+    purgeAllDemoData();
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('proconnect_cards_data_v2');
+        localStorage.removeItem('proconnect_orgs_data_v2');
+        localStorage.removeItem('proconnect_users_data_v2');
+        localStorage.removeItem('proconnect_leads_data_v2');
+        localStorage.removeItem('proconnect_analytics_data_v2');
+      } catch {}
+    }
+    setPurgeToast(true);
+    setTimeout(() => setPurgeToast(false), 4500);
+    loadData();
+  };
+
   const loadData = async () => {
+    // 0. Purgar caché demo residual
+    purgeAllDemoData();
+
     let realUsers: User[] = [];
     let realCards: FullCard[] = [];
     let realOrgs: Organization[] = [];
@@ -68,7 +92,6 @@ export default function SuperadminPage() {
         if (usersRes.data && usersRes.data.length > 0) {
           realUsers = usersRes.data.map((u) => {
             if (isSuperAdminEmail(u.email) && u.role !== 'superadmin') {
-              // Auto-elevar en base de datos
               supabase?.from('users').update({ role: 'superadmin' }).eq('id', u.id).then();
               return { ...u, role: 'superadmin' as UserRole };
             }
@@ -86,7 +109,7 @@ export default function SuperadminPage() {
       }
     }
 
-    // 1.1 Si no hay tarjetas de Supabase por RLS, consultar la API del servidor /api/cards
+    // 1.1 Consultar la API del servidor /api/cards
     try {
       const apiRes = await fetch('/api/cards');
       const apiData = await apiRes.json();
@@ -103,33 +126,42 @@ export default function SuperadminPage() {
       console.warn('Error al consultar /api/cards en admin:', e);
     }
 
-    // 2. Cargar datos locales de respaldo
-    const localCards = getStoredCards();
-    const localUsers = getStoredUsers();
-    const localOrgs = getStoredOrganizations();
+    // 2. Cargar datos locales de respaldo (modo estricto sin demos)
+    const localCards = getStoredCards(false);
+    const localUsers = getStoredUsers(false);
+    const localOrgs = getStoredOrganizations(false);
 
-    // 3. Filtro de Modo Limpio (Excluir semillas ficticias de demostración)
-    const demoCardSlugs = new Set(['carlos-fibraconnect', 'elena-rodriguez', 'marcos-tech']);
-    const demoUserEmails = new Set(['admin@proconnect.app', 'elena@nexacorp.io']);
-    const demoOrgSlugs = new Set(['nexacorp']);
+    // 3. Filtrar estrictamente cualquier residuo de demo
+    const finalCards = [...realCards, ...localCards.filter((c) => !realCards.some((rc) => rc.id === c.id))]
+      .filter((c) => c && c.slug && !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim()));
 
-    const finalUsers = hideDemoData
-      ? realUsers.length > 0
-        ? realUsers.filter((u) => !demoUserEmails.has(u.email?.toLowerCase()))
-        : localUsers.filter((u) => !demoUserEmails.has(u.email?.toLowerCase()))
-      : [...realUsers, ...localUsers.filter((u) => !realUsers.some((ru) => ru.id === u.id))];
+    const finalOrgs = [...realOrgs, ...localOrgs.filter((o) => !realOrgs.some((ro) => ro.id === o.id))]
+      .filter((o) => o && !DEMO_ORG_SLUGS.has(o.slug?.toLowerCase().trim()) && !DEMO_ORG_IDS.has(o.id));
 
-    const finalCards = hideDemoData
-      ? realCards.length > 0
-        ? realCards.filter((c) => !demoCardSlugs.has(c.slug?.toLowerCase()))
-        : localCards.filter((c) => !demoCardSlugs.has(c.slug?.toLowerCase()))
-      : [...realCards, ...localCards.filter((c) => !realCards.some((rc) => rc.id === c.id))];
+    // 4. Sintetizar cuentas de usuario a partir de tarjetas reales si no están en public.users
+    const usersMap = new Map<string, User>();
+    [...realUsers, ...localUsers].forEach((u) => {
+      if (u && u.email && !DEMO_USER_EMAILS.has(u.email.toLowerCase().trim())) {
+        usersMap.set(u.id || u.email, u);
+      }
+    });
 
-    const finalOrgs = hideDemoData
-      ? realOrgs.length > 0
-        ? realOrgs.filter((o) => !demoOrgSlugs.has(o.slug?.toLowerCase()))
-        : localOrgs.filter((o) => !demoOrgSlugs.has(o.slug?.toLowerCase()))
-      : [...realOrgs, ...localOrgs.filter((o) => !realOrgs.some((ro) => ro.id === o.id))];
+    finalCards.forEach((c) => {
+      if (c.user_id && !usersMap.has(c.user_id)) {
+        const email = (c as any).user_email || (c as any).email || `${c.slug}@proconnect.app`;
+        if (!DEMO_USER_EMAILS.has(email.toLowerCase())) {
+          usersMap.set(c.user_id, {
+            id: c.user_id,
+            email: email,
+            full_name: c.full_name || 'Usuario ProConnect',
+            role: isSuperAdminEmail(email) ? 'superadmin' : 'client',
+            created_at: c.created_at || new Date().toISOString(),
+          });
+        }
+      }
+    });
+
+    const finalUsers = Array.from(usersMap.values());
 
     setUsers(finalUsers);
     setCards(finalCards);
@@ -155,7 +187,7 @@ export default function SuperadminPage() {
 
   useEffect(() => {
     loadData();
-  }, [hideDemoData]);
+  }, []);
 
   const handleToggleCardActive = async (cardId: string) => {
     toggleCardActiveStatus(cardId);
@@ -307,31 +339,39 @@ export default function SuperadminPage() {
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
-            {/* Toggle Modo Limpio */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-xs font-bold shadow-sm">
+              <Database className="w-3.5 h-3.5 text-emerald-600" />
+              <span>100% Datos Reales en Vivo</span>
+            </div>
+
             <button
               type="button"
-              onClick={() => setHideDemoData(!hideDemoData)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition-all ${
-                hideDemoData
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 shadow-sm'
-                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700'
-              }`}
-              title="Alternar entre ver solo usuarios reales o incluir datos de demostración"
+              onClick={handlePurgeDemos}
+              className="px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+              title="Elimina cualquier dato ficticio o semilla demo del caché local del navegador"
             >
-              <CheckCircle2 className={`w-3.5 h-3.5 ${hideDemoData ? 'text-emerald-500' : 'text-slate-400'}`} />
-              <span>{hideDemoData ? 'Modo Limpio (Solo Datos Reales)' : 'Mostrando Demos'}</span>
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Purgar Caché Demo</span>
             </button>
 
             <button
               type="button"
               onClick={loadData}
-              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800/60 text-xs font-semibold flex items-center gap-2 transition-colors self-start sm:self-auto bg-white dark:bg-slate-900"
+              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800/60 text-xs font-semibold flex items-center gap-2 transition-colors self-start sm:self-auto bg-white dark:bg-slate-900 cursor-pointer shadow-sm"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Actualizar Datos</span>
             </button>
           </div>
         </div>
+
+        {/* Notificación de Purga de Caché */}
+        {purgeToast && (
+          <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-2.5 shadow-sm animate-in fade-in">
+            <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span>¡Caché demo purgado con éxito! Ahora tu panel solo muestra usuarios, empresas y tarjetas 100% reales.</span>
+          </div>
+        )}
 
         {/* 1. Métricas Globales del Sistema */}
         <section>

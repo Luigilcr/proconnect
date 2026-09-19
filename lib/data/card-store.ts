@@ -30,22 +30,114 @@ const STORAGE_USERS_KEY = 'proconnect_users_data_v2';
 const STORAGE_LEADS_KEY = 'proconnect_leads_data_v2';
 const STORAGE_ANALYTICS_KEY = 'proconnect_analytics_data_v2';
 
+export const DEMO_CARD_SLUGS = new Set([
+  'carlos-fibraconnect',
+  'maria-fibraconnect',
+  'andres-fibraconnect',
+  'elena-rodriguez',
+  'marcos-tech',
+  'sofia-valenzuela',
+  'carlos-mendoza',
+]);
+
+export const DEMO_USER_EMAILS = new Set([
+  'admin@proconnect.app',
+  'elena@nexacorp.io',
+  'carlos@mendozacapital.com',
+]);
+
+export const DEMO_ORG_SLUGS = new Set([
+  'nexacorp',
+  'mendoza-capital',
+  'studio-minimal',
+  'fibraconnect',
+]);
+
+export const DEMO_ORG_IDS = new Set([
+  'e0000000-0000-0000-0000-000000000001',
+  'e0000000-0000-0000-0000-000000000002',
+  'e0000000-0000-0000-0000-000000000003',
+]);
+
+/**
+ * Purga de forma irreversible cualquier dato ficticio/demo del caché local del navegador
+ */
+export function purgeAllDemoData(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    // 1. Limpiar tarjetas
+    const rawCards = localStorage.getItem(STORAGE_CARDS_KEY);
+    if (rawCards) {
+      const parsedCards = JSON.parse(rawCards);
+      if (Array.isArray(parsedCards)) {
+        const cleanCards = parsedCards.filter(
+          (c) => c && c.slug && !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim())
+        );
+        localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cleanCards));
+      }
+    }
+
+    // 2. Limpiar organizaciones
+    const rawOrgs = localStorage.getItem(STORAGE_ORGS_KEY);
+    if (rawOrgs) {
+      const parsedOrgs = JSON.parse(rawOrgs);
+      if (Array.isArray(parsedOrgs)) {
+        const cleanOrgs = parsedOrgs.filter(
+          (o) =>
+            o &&
+            !DEMO_ORG_SLUGS.has(o.slug?.toLowerCase().trim()) &&
+            !DEMO_ORG_IDS.has(o.id)
+        );
+        localStorage.setItem(STORAGE_ORGS_KEY, JSON.stringify(cleanOrgs));
+      }
+    } else {
+      localStorage.setItem(STORAGE_ORGS_KEY, JSON.stringify([]));
+    }
+
+    // 3. Limpiar usuarios
+    const rawUsers = localStorage.getItem(STORAGE_USERS_KEY);
+    if (rawUsers) {
+      const parsedUsers = JSON.parse(rawUsers);
+      if (Array.isArray(parsedUsers)) {
+        const cleanUsers = parsedUsers.filter(
+          (u) => u && !DEMO_USER_EMAILS.has(u.email?.toLowerCase().trim())
+        );
+        localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(cleanUsers));
+      }
+    } else {
+      localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify([]));
+    }
+  } catch (e) {
+    console.warn('Error purgando datos demo de localStorage:', e);
+  }
+}
+
 // ============================================================================
 // 1. GESTIÓN DE ORGANIZACIONES (B2B)
 // ============================================================================
 
-export function getStoredOrganizations(): Organization[] {
-  if (typeof window === 'undefined') return DEMO_ORGANIZATIONS;
+export function getStoredOrganizations(includeDemos: boolean = false): Organization[] {
+  if (typeof window === 'undefined') return includeDemos ? DEMO_ORGANIZATIONS : [];
   try {
     const raw = localStorage.getItem(STORAGE_ORGS_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_ORGS_KEY, JSON.stringify(DEMO_ORGANIZATIONS));
-      return DEMO_ORGANIZATIONS;
+      return includeDemos ? DEMO_ORGANIZATIONS : [];
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEMO_ORGANIZATIONS;
+    if (Array.isArray(parsed)) {
+      if (!includeDemos) {
+        return parsed.filter(
+          (o) =>
+            o &&
+            !DEMO_ORG_SLUGS.has(o.slug?.toLowerCase().trim()) &&
+            !DEMO_ORG_IDS.has(o.id)
+        );
+      }
+      return parsed;
+    }
+    return includeDemos ? DEMO_ORGANIZATIONS : [];
   } catch {
-    return DEMO_ORGANIZATIONS;
+    return includeDemos ? DEMO_ORGANIZATIONS : [];
   }
 }
 
@@ -101,7 +193,7 @@ function ensureCardExpiration(card: FullCard): FullCard {
   };
 }
 
-export function getStoredCards(): FullCard[] {
+export function getStoredCards(includeDemos: boolean = false): FullCard[] {
   if (typeof window === 'undefined') {
     try {
       const fs = require('fs');
@@ -111,38 +203,28 @@ export function getStoredCards(): FullCard[] {
         const raw = fs.readFileSync(file, 'utf-8').replace(/^\uFEFF/, '').trim();
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const map = new Map<string, FullCard>();
-          DEMO_CARDS.forEach((c) => map.set(c.slug.toLowerCase().trim(), ensureCardExpiration(c)));
-          parsed.forEach((c: FullCard) => {
-            if (c && c.slug) map.set(c.slug.toLowerCase().trim(), ensureCardExpiration(c));
-          });
-          return Array.from(map.values());
+          return parsed
+            .filter((c: FullCard) => c && c.slug && (includeDemos || !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim())))
+            .map(ensureCardExpiration);
         }
       }
     } catch {}
-    return DEMO_CARDS.map(ensureCardExpiration);
+    return includeDemos ? DEMO_CARDS.map(ensureCardExpiration) : [];
   }
   try {
     const raw = localStorage.getItem(STORAGE_CARDS_KEY);
     if (!raw) {
-      const initial = DEMO_CARDS.map(ensureCardExpiration);
-      localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(initial));
-      return initial;
+      return includeDemos ? DEMO_CARDS.map(ensureCardExpiration) : [];
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      if (!parsed.some((c: FullCard) => c?.slug === 'luigi-colonico')) {
-        parsed.unshift(ensureCardExpiration(LUIGI_COLONICO_CARD));
-      }
-      const updated = parsed.map(ensureCardExpiration);
-      try {
-        localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(updated));
-      } catch {}
-      return updated;
+      return parsed
+        .filter((c: FullCard) => c && c.slug && (includeDemos || !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim())))
+        .map(ensureCardExpiration);
     }
-    return DEMO_CARDS.map(ensureCardExpiration);
+    return includeDemos ? DEMO_CARDS.map(ensureCardExpiration) : [];
   } catch {
-    return DEMO_CARDS.map(ensureCardExpiration);
+    return includeDemos ? DEMO_CARDS.map(ensureCardExpiration) : [];
   }
 }
 
@@ -394,18 +476,22 @@ export function getAnalyticsForCard(cardId: string): {
 // 4. GESTIÓN DE USUARIOS Y MÉTRICAS GLOBALES
 // ============================================================================
 
-export function getStoredUsers(): User[] {
-  if (typeof window === 'undefined') return DEMO_USERS;
+export function getStoredUsers(includeDemos: boolean = false): User[] {
+  if (typeof window === 'undefined') return includeDemos ? DEMO_USERS : [];
   try {
     const raw = localStorage.getItem(STORAGE_USERS_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(DEMO_USERS));
-      return DEMO_USERS;
+      return includeDemos ? DEMO_USERS : [];
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEMO_USERS;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.filter(
+        (u: User) => u && (includeDemos || !DEMO_USER_EMAILS.has(u.email?.toLowerCase().trim()))
+      );
+    }
+    return includeDemos ? DEMO_USERS : [];
   } catch {
-    return DEMO_USERS;
+    return includeDemos ? DEMO_USERS : [];
   }
 }
 
