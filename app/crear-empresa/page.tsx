@@ -3,8 +3,8 @@
  * Queda prohibida la reproducción, copia o ingeniería inversa de este software.
  *
  * ONBOARDING SELF-SERVICE PARA EMPRESAS B2B (/crear-empresa)
- * Permite a cualquier empresa seleccionar su plan, registrar su organización y
- * crear automáticamente a su Administrador (org_admin) para gestionar su equipo.
+ * Permite a cualquier empresa seleccionar su plan, registrar su organización,
+ * aplicar cupones de descuento, validar comprobante de pago y crear a su Administrador (org_admin).
  */
 
 'use client';
@@ -14,8 +14,9 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
-import { Organization, FullCard } from '@/lib/types';
+import { Organization, FullCard, DiscountCoupon } from '@/lib/types';
 import { saveOrganization, saveCard } from '@/lib/data/card-store';
+import { validateCoupon, recordCouponUsage, saveOrganizationPayment } from '@/lib/data/coupon-store';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { compressImage } from '@/lib/image-compressor';
 import { extractPaletteFromImage } from '@/lib/color-extractor';
@@ -43,6 +44,12 @@ import {
   HelpCircle,
   QrCode,
   Zap,
+  Ticket,
+  Tag,
+  DollarSign,
+  Percent,
+  Receipt,
+  FileText,
 } from 'lucide-react';
 
 const CORPORATE_PLANS = [
@@ -106,14 +113,19 @@ function CrearEmpresaContent() {
   const searchParams = useSearchParams();
   const initialPlan = searchParams.get('plan') || 'corporativo';
 
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  // Pasos: 1 = Plan & Cupones, 2 = Datos Empresa, 3 = Admin & Seguridad, 4 = Pago & Comprobante, 5 = Éxito
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
-  // Paso 1: Selección de Plan
+  // Paso 1: Selección de Plan y Cupones
   const [selectedPlanId, setSelectedPlanId] = useState<string>(
     CORPORATE_PLANS.some((p) => p.id === initialPlan) ? initialPlan : 'corporativo'
   );
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('annual');
-  const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'card' | 'zelle'>('card');
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<DiscountCoupon | null>(null);
+  const [couponDiscount, setCouponDiscount] = useState<number>(0);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponSuccess, setCouponSuccess] = useState<string | null>(null);
 
   // Paso 2: Datos de la Empresa
   const [companyName, setCompanyName] = useState('');
@@ -128,13 +140,20 @@ function CrearEmpresaContent() {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [extractingColors, setExtractingColors] = useState(false);
 
-  // Paso 3: Cuenta del Administrador Principal (org_admin)
+  // Paso 3: Cuenta del Administrador Principal (org_admin) & Seguridad
   const [adminName, setAdminName] = useState('');
   const [adminJobTitle, setAdminJobTitle] = useState('Director General');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Paso 4: Pago & Comprobante
+  const [paymentMethod, setPaymentMethod] = useState<'pago_movil' | 'zelle' | 'transfer' | 'card'>('pago_movil');
+  const [paymentReference, setPaymentReference] = useState('');
+  const [receiptUrl, setReceiptUrl] = useState('');
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
 
   // Estado de envío
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -155,6 +174,52 @@ function CrearEmpresaContent() {
   }, [companyName, companySlug]);
 
   const selectedPlan = CORPORATE_PLANS.find((p) => p.id === selectedPlanId) || CORPORATE_PLANS[1];
+  const rawSubtotal = billingCycle === 'annual' ? selectedPlan.priceAnnual * 12 : selectedPlan.priceMonthly;
+  const finalPrice = Math.max(0, Math.round((rawSubtotal - couponDiscount) * 100) / 100);
+
+  // Re-validar cupón si cambia el plan o ciclo
+  useEffect(() => {
+    if (appliedCoupon) {
+      const res = validateCoupon(appliedCoupon.code, selectedPlan.id, rawSubtotal);
+      if (res.valid) {
+        setCouponDiscount(res.discountAmount);
+      } else {
+        setAppliedCoupon(null);
+        setCouponDiscount(0);
+        setCouponError('El cupón dejó de ser aplicable con la nueva selección.');
+      }
+    }
+  }, [selectedPlanId, billingCycle]);
+
+  // Aplicar cupón de descuento
+  const handleApplyCoupon = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setCouponError(null);
+    setCouponSuccess(null);
+    if (!couponInput.trim()) {
+      setCouponError('Ingresa un código de cupón.');
+      return;
+    }
+
+    const res = validateCoupon(couponInput.trim(), selectedPlan.id, rawSubtotal);
+    if (res.valid) {
+      setAppliedCoupon(res.coupon || null);
+      setCouponDiscount(res.discountAmount);
+      setCouponSuccess(res.message);
+    } else {
+      setAppliedCoupon(null);
+      setCouponDiscount(0);
+      setCouponError(res.message);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponDiscount(0);
+    setCouponInput('');
+    setCouponSuccess(null);
+    setCouponError(null);
+  };
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -171,7 +236,6 @@ function CrearEmpresaContent() {
 
       if (data.success && data.url) {
         setLogoUrl(data.url);
-        // Extraer colores automáticamente del logo
         setExtractingColors(true);
         try {
           const palette = await extractPaletteFromImage(data.url);
@@ -181,9 +245,7 @@ function CrearEmpresaContent() {
             setAccentColor(palette.accent);
             setBackgroundColor(palette.background);
           }
-        } catch {
-          // Ignorar error de extracción
-        } finally {
+        } catch {} finally {
           setExtractingColors(false);
         }
       } else {
@@ -196,10 +258,54 @@ function CrearEmpresaContent() {
     }
   };
 
+  const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingReceipt(true);
+    try {
+      const compressed = await compressImage(file, { maxWidth: 1200, maxHeight: 1200, quality: 0.85 });
+      const formData = new FormData();
+      formData.append('file', compressed);
+
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (data.success && data.url) {
+        setReceiptUrl(data.url);
+      } else {
+        alert('Error al subir comprobante. Intenta nuevamente.');
+      }
+    } catch (err) {
+      console.warn('Error subiendo comprobante:', err);
+    } finally {
+      setUploadingReceipt(false);
+    }
+  };
+
+  // Cálculo de fortaleza de contraseña
+  const getPasswordStrength = (pwd: string) => {
+    if (!pwd) return { label: 'Requerida', color: 'text-slate-400', level: 0 };
+    if (pwd.length < 6) return { label: 'Muy Débil (mínimo 6 caracteres)', color: 'text-rose-500', level: 1 };
+    const hasLetters = /[a-zA-Z]/.test(pwd);
+    const hasNumbers = /[0-9]/.test(pwd);
+    const hasSymbols = /[^a-zA-Z0-9]/.test(pwd);
+    if (pwd.length >= 8 && hasLetters && hasNumbers && hasSymbols) {
+      return { label: 'Excelente & Altamente Segura', color: 'text-emerald-500', level: 3 };
+    }
+    if (pwd.length >= 6 && hasLetters && hasNumbers) {
+      return { label: 'Segura', color: 'text-blue-500', level: 2 };
+    }
+    return { label: 'Media', color: 'text-amber-500', level: 1 };
+  };
+
+  const passwordStrength = getPasswordStrength(adminPassword);
+
   const handleCreateCompany = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
+    // Validaciones
     if (!companyName.trim()) {
       setErrorMsg('Por favor ingresa el nombre de la empresa.');
       setStep(2);
@@ -215,6 +321,16 @@ function CrearEmpresaContent() {
       setStep(3);
       return;
     }
+    if (adminPassword !== adminConfirmPassword) {
+      setErrorMsg('Las contraseñas no coinciden. Por favor verifícalas.');
+      setStep(3);
+      return;
+    }
+    if (finalPrice > 0 && (paymentMethod === 'pago_movil' || paymentMethod === 'transfer' || paymentMethod === 'zelle') && !paymentReference.trim()) {
+      setErrorMsg('Por favor ingresa el número de referencia o confirmación de tu pago.');
+      setStep(4);
+      return;
+    }
 
     setIsSubmitting(true);
 
@@ -227,7 +343,7 @@ function CrearEmpresaContent() {
       const orgId = crypto.randomUUID ? crypto.randomUUID() : 'org_' + Date.now();
       let adminUserId = crypto.randomUUID ? crypto.randomUUID() : 'user_' + Date.now();
 
-      // 1. Registro en Supabase Auth si está habilitado
+      // 1. Registro en Supabase Auth
       if (isSupabaseEnabled && supabase) {
         try {
           const { data: authData, error: authErr } = await supabase.auth.signUp({
@@ -241,10 +357,6 @@ function CrearEmpresaContent() {
               },
             },
           });
-
-          if (authErr && !authErr.message.includes('already registered')) {
-            console.warn('Advertencia en signUp:', authErr.message);
-          }
 
           if (authData?.user?.id) {
             adminUserId = authData.user.id;
@@ -270,7 +382,6 @@ function CrearEmpresaContent() {
         allowed_layouts: ['modern', 'executive', 'minimal', 'banner_header', 'card_id_badge', 'creative_grid'],
         enforce_brand_lock: enforceBrandLock,
         max_cards: selectedPlan.maxCards,
-        description: `Organización del sector ${industry}.`,
         created_at: new Date().toISOString(),
       };
 
@@ -342,6 +453,32 @@ function CrearEmpresaContent() {
       saveOrganization(newOrganization);
       saveCard(adminCard);
 
+      // 5. Registrar el Pago B2B
+      saveOrganizationPayment({
+        id: 'pay_' + Date.now(),
+        organization_id: newOrganization.id,
+        organization_name: newOrganization.name,
+        plan_id: selectedPlan.id,
+        plan_name: selectedPlan.name,
+        billing_cycle: billingCycle,
+        subtotal: rawSubtotal,
+        discount_amount: couponDiscount,
+        total_paid: finalPrice,
+        coupon_code: appliedCoupon ? appliedCoupon.code : null,
+        payment_method: paymentMethod,
+        reference_number: paymentReference.trim() || 'PROMO-100',
+        receipt_url: receiptUrl || null,
+        admin_email: adminEmail.trim(),
+        admin_name: adminName.trim(),
+        admin_phone: adminPhone.trim() || null,
+        status: finalPrice === 0 ? 'verified' : 'pending',
+        created_at: new Date().toISOString(),
+      });
+
+      if (appliedCoupon) {
+        recordCouponUsage(appliedCoupon.code);
+      }
+
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('proconnect_active_org_id', orgId);
@@ -349,11 +486,11 @@ function CrearEmpresaContent() {
         } catch {}
       }
 
-      // 5. Sincronizar en Supabase si está disponible
+      // 6. Sincronizar en Supabase (¡COLUMNAS EXACTAS SIN description!)
       if (isSupabaseEnabled && supabase) {
         try {
           // Guardar organización
-          await supabase.from('organizations').upsert({
+          const { error: orgErr } = await supabase.from('organizations').upsert({
             id: newOrganization.id,
             name: newOrganization.name,
             slug: newOrganization.slug,
@@ -363,8 +500,11 @@ function CrearEmpresaContent() {
             allowed_layouts: newOrganization.allowed_layouts,
             enforce_brand_lock: newOrganization.enforce_brand_lock,
             max_cards: newOrganization.max_cards,
-            description: newOrganization.description,
           });
+
+          if (orgErr) {
+            console.warn('Upsert org aviso:', orgErr.message);
+          }
 
           // Actualizar perfil de usuario como org_admin
           await supabase.from('users').upsert({
@@ -373,19 +513,29 @@ function CrearEmpresaContent() {
             full_name: adminName.trim(),
             role: 'org_admin',
             organization_id: orgId,
-          });
+          }, { onConflict: 'id' });
 
           // Guardar tarjeta del administrador
           const dbAdminCard = normalizeCardForDatabase(adminCard, adminUserId, adminEmail);
           const payload = getSupabaseCardPayload(dbAdminCard);
           await supabase.from('cards').upsert(payload);
+
+          // Iniciar sesión automáticamente en el cliente
+          try {
+            await supabase.auth.signInWithPassword({
+              email: adminEmail.trim(),
+              password: adminPassword,
+            });
+          } catch (loginErr) {
+            console.warn('Auto sign-in aviso:', loginErr);
+          }
         } catch (sbErr) {
           console.warn('Sincronización en Supabase tuvo aviso:', sbErr);
         }
       }
 
-      // 6. Avanzar al paso final de éxito
-      setStep(4);
+      // 7. Avanzar al paso final de éxito
+      setStep(5);
     } catch (err: any) {
       console.error('Error al crear la cuenta corporativa:', err);
       setErrorMsg(err?.message || 'Hubo un problema al crear la cuenta de la empresa.');
@@ -419,12 +569,12 @@ function CrearEmpresaContent() {
         </div>
 
         {/* Indicador de Pasos */}
-        <div className="max-w-2xl mx-auto mb-10">
-          <div className="grid grid-cols-3 gap-2 text-center text-xs font-bold">
+        <div className="max-w-3xl mx-auto mb-10">
+          <div className="grid grid-cols-4 gap-2 text-center text-xs font-bold">
             <div
-              className={`p-3 rounded-2xl border transition-all flex items-center justify-center gap-2 ${
+              className={`p-2.5 rounded-2xl border transition-all flex items-center justify-center gap-1.5 ${
                 step === 1
-                  ? 'border-brand-blue bg-blue-50 dark:bg-blue-950/30 text-brand-blue shadow-sm'
+                  ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/30 text-purple-700 shadow-sm'
                   : step > 1
                   ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700'
                   : 'border-slate-200 dark:border-slate-800 text-slate-400'
@@ -433,13 +583,13 @@ function CrearEmpresaContent() {
               <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black border border-current">
                 {step > 1 ? <Check className="w-3 h-3" /> : '1'}
               </span>
-              <span className="hidden sm:inline">1. Plan B2B</span>
+              <span className="hidden sm:inline">1. Plan &amp; Cupón</span>
             </div>
 
             <div
-              className={`p-3 rounded-2xl border transition-all flex items-center justify-center gap-2 ${
+              className={`p-2.5 rounded-2xl border transition-all flex items-center justify-center gap-1.5 ${
                 step === 2
-                  ? 'border-brand-blue bg-blue-50 dark:bg-blue-950/30 text-brand-blue shadow-sm'
+                  ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/30 text-purple-700 shadow-sm'
                   : step > 2
                   ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700'
                   : 'border-slate-200 dark:border-slate-800 text-slate-400'
@@ -452,16 +602,31 @@ function CrearEmpresaContent() {
             </div>
 
             <div
-              className={`p-3 rounded-2xl border transition-all flex items-center justify-center gap-2 ${
-                step >= 3
-                  ? 'border-brand-blue bg-blue-50 dark:bg-blue-950/30 text-brand-blue shadow-sm'
+              className={`p-2.5 rounded-2xl border transition-all flex items-center justify-center gap-1.5 ${
+                step === 3
+                  ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/30 text-purple-700 shadow-sm'
+                  : step > 3
+                  ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700'
                   : 'border-slate-200 dark:border-slate-800 text-slate-400'
               }`}
             >
               <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black border border-current">
-                {step === 4 ? <Check className="w-3 h-3" /> : '3'}
+                {step > 3 ? <Check className="w-3 h-3" /> : '3'}
               </span>
               <span className="hidden sm:inline">3. Administrador</span>
+            </div>
+
+            <div
+              className={`p-2.5 rounded-2xl border transition-all flex items-center justify-center gap-1.5 ${
+                step >= 4
+                  ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/30 text-purple-700 shadow-sm'
+                  : 'border-slate-200 dark:border-slate-800 text-slate-400'
+              }`}
+            >
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black border border-current">
+                {step === 5 ? <Check className="w-3 h-3" /> : '4'}
+              </span>
+              <span className="hidden sm:inline">4. Pago &amp; Activación</span>
             </div>
           </div>
         </div>
@@ -473,7 +638,7 @@ function CrearEmpresaContent() {
           </div>
         )}
 
-        {/* ── PASO 1: SELECCIÓN DE PLAN ── */}
+        {/* ── PASO 1: SELECCIÓN DE PLAN & CUPÓN DE DESCUENTO ── */}
         {step === 1 && (
           <div className="space-y-6">
             {/* Selector de Facturación */}
@@ -572,52 +737,87 @@ function CrearEmpresaContent() {
               })}
             </div>
 
-            {/* Métodos de Pago Disponibles */}
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="space-y-1 text-center sm:text-left">
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-purple-600" />
-                  <span>Método de Activación y Pago de la Suscripción</span>
-                </h4>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Activación inmediata de cuenta. Métodos: Tarjeta Internacional, Pago Móvil (Venezuela), Transferencia o Zelle.
-                </p>
+            {/* Caja de Canje de Cupones de Descuento */}
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 border border-purple-200 dark:border-purple-800">
+                    <Ticket className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                      ¿Tienes un Cupón de Descuento Corporativo?
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Ingresa tu código promocional para aplicar el beneficio directo a tu plan.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={couponInput}
+                    onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                    placeholder="EJ: PROMO50"
+                    disabled={!!appliedCoupon}
+                    className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-bold uppercase outline-none focus:border-purple-600 disabled:opacity-50"
+                  />
+                  {appliedCoupon ? (
+                    <button
+                      type="button"
+                      onClick={handleRemoveCoupon}
+                      className="px-3 py-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-colors"
+                    >
+                      Quitar
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleApplyCoupon}
+                      className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-colors shadow-sm"
+                    >
+                      Aplicar
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('card')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                    paymentMethod === 'card'
-                      ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/40 text-purple-700'
-                      : 'border-slate-200 text-slate-500'
-                  }`}
-                >
-                  💳 Tarjeta
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('transfer')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                    paymentMethod === 'transfer'
-                      ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/40 text-purple-700'
-                      : 'border-slate-200 text-slate-500'
-                  }`}
-                >
-                  🏦 Pago Móvil / Banco
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('zelle')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                    paymentMethod === 'zelle'
-                      ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/40 text-purple-700'
-                      : 'border-slate-200 text-slate-500'
-                  }`}
-                >
-                  ⚡ Zelle
-                </button>
+              {couponSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{couponSuccess}</span>
+                </div>
+              )}
+
+              {couponError && (
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{couponError}</span>
+                </div>
+              )}
+
+              {/* Desglose de Precios */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                <div className="space-y-0.5">
+                  <span className="text-slate-500">Plan: <strong className="text-slate-800 dark:text-slate-200">{selectedPlan.name}</strong> ({billingCycle === 'annual' ? 'Facturación Anual' : 'Facturación Mensual'})</span>
+                  <div className="text-[11px] text-slate-400">Subtotal normal: ${rawSubtotal} USD</div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {couponDiscount > 0 && (
+                    <div className="text-right">
+                      <span className="text-[10px] text-slate-400 block line-through">${rawSubtotal} USD</span>
+                      <span className="text-xs font-bold text-emerald-600">Ahorras -${couponDiscount} USD</span>
+                    </div>
+                  )}
+                  <div className="text-right">
+                    <span className="text-slate-500 text-[10px] block">Total a pagar:</span>
+                    <span className="text-2xl font-black text-purple-600 dark:text-purple-400">
+                      ${finalPrice} <span className="text-xs font-medium text-slate-400">USD</span>
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -652,68 +852,74 @@ function CrearEmpresaContent() {
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                   Nombre Oficial de la Empresa *
                 </label>
-                <input
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Ej. Grupo Financiero Horizon C.A."
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600"
-                  required
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Enlace Web Corporativo (Slug único)
-                </label>
-                <div className="flex items-center">
-                  <span className="px-3 py-2.5 rounded-l-xl bg-slate-100 dark:bg-slate-800 border border-r-0 border-slate-200 dark:border-slate-700 text-slate-400 text-xs font-mono">
-                    proconnect.app/org/
-                  </span>
+                <div className="relative">
+                  <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    value={companySlug}
-                    onChange={(e) => setCompanySlug(e.target.value)}
-                    placeholder="horizon-group"
-                    className="w-full px-3 py-2.5 rounded-r-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600 font-mono"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Ej. Inversiones Conexión C.A."
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600"
+                    required
                   />
                 </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Sector / Industria
+                  Enlace Web Corporativo (Slug) *
+                </label>
+                <div className="flex rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 overflow-hidden text-xs">
+                  <span className="px-3 py-2.5 bg-slate-100 dark:bg-slate-750 text-slate-400 font-mono text-[11px] border-r border-slate-200 dark:border-slate-700 flex items-center">
+                    proconnect.app/org/
+                  </span>
+                  <input
+                    type="text"
+                    value={companySlug}
+                    onChange={(e) => setCompanySlug(e.target.value)}
+                    placeholder="mi-empresa"
+                    className="w-full px-3 py-2.5 bg-transparent font-mono text-xs font-bold text-purple-600 outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Industria o Sector Comercial
                 </label>
                 <select
                   value={industry}
                   onChange={(e) => setIndustry(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600"
                 >
-                  <option value="Servicios Profesionales">Servicios Profesionales &amp; Consultoría</option>
-                  <option value="Inmobiliaria & Construcción">Inmobiliaria &amp; Construcción</option>
-                  <option value="Tecnología & Telecomunicaciones">Tecnología &amp; Telecomunicaciones</option>
-                  <option value="Banca, Seguros & Finanzas">Banca, Seguros &amp; Finanzas</option>
-                  <option value="Salud & Medicina">Salud, Clínicas &amp; Farmacia</option>
-                  <option value="Gastronomía & Restaurantes">Gastronomía &amp; Restaurantes</option>
-                  <option value="Leyes & Asesoría Jurídica">Leyes &amp; Asesoría Jurídica</option>
+                  <option value="Servicios Profesionales">Servicios Profesionales / Consultoría</option>
+                  <option value="Tecnología e Informática">Tecnología e Informática</option>
+                  <option value="Inmobiliaria y Construcción">Inmobiliaria y Construcción</option>
+                  <option value="Salud y Medicina">Salud y Medicina</option>
+                  <option value="Gastronomía y Restaurantes">Gastronomía y Restaurantes</option>
+                  <option value="Comercio y Retail">Comercio y Retail</option>
+                  <option value="Finanzas y Seguros">Finanzas y Seguros</option>
                   <option value="Otro">Otro Sector</option>
                 </select>
               </div>
 
+              {/* Subida de Logotipo */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Logotipo Corporativo
+                  Logotipo Corporativo (PNG con fondo transparente recomendado)
                 </label>
                 <div className="flex items-center gap-3">
                   {logoUrl ? (
-                    <div className="w-12 h-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1 flex items-center justify-center relative flex-shrink-0">
+                    <div className="w-11 h-11 rounded-xl border border-slate-200 dark:border-slate-700 p-1 flex items-center justify-center bg-white dark:bg-slate-800">
                       <img src={logoUrl} alt="Logo" className="max-h-full max-w-full object-contain" />
                     </div>
                   ) : null}
-
-                  <label className="flex-1 cursor-pointer flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20 text-purple-700 dark:text-purple-300 text-xs font-bold hover:bg-purple-100 transition-colors">
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>{uploadingLogo ? 'Subiendo...' : logoUrl ? 'Cambiar Logotipo' : 'Subir Logo PNG / SVG'}</span>
+                  <label className="flex-1 cursor-pointer">
+                    <div className="w-full py-2.5 px-3 rounded-xl border border-dashed border-purple-300 dark:border-purple-800 hover:border-purple-500 bg-purple-50/30 dark:bg-purple-950/20 text-xs font-bold text-purple-600 flex items-center justify-center gap-2 transition-colors">
+                      <Upload className="w-4 h-4" />
+                      <span>{uploadingLogo ? 'Procesando...' : logoUrl ? 'Cambiar Logotipo' : 'Subir Logotipo'}</span>
+                    </div>
                     <input
                       type="file"
                       accept="image/*"
@@ -844,12 +1050,9 @@ function CrearEmpresaContent() {
           </div>
         )}
 
-        {/* ── PASO 3: CUENTA DEL ADMINISTRADOR PRINCIPAL ── */}
+        {/* ── PASO 3: CUENTA DEL ADMINISTRADOR PRINCIPAL & SEGURIDAD ESTRICTA ── */}
         {step === 3 && (
-          <form
-            onSubmit={handleCreateCompany}
-            className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6 animate-in fade-in"
-          >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6 animate-in fade-in">
             <div className="border-b border-slate-100 dark:border-slate-800 pb-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -878,7 +1081,7 @@ function CrearEmpresaContent() {
                     type="text"
                     value={adminName}
                     onChange={(e) => setAdminName(e.target.value)}
-                    placeholder="Ej. Roberto Sánchez"
+                    placeholder="Ej. Luigi Colonico"
                     className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600"
                     required
                   />
@@ -929,53 +1132,84 @@ function CrearEmpresaContent() {
                     type="tel"
                     value={adminPhone}
                     onChange={(e) => setAdminPhone(e.target.value)}
-                    placeholder="+58 412 123 4567"
+                    placeholder="+58 424 123 4567"
                     className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600"
                   />
                 </div>
               </div>
 
-              <div className="sm:col-span-2 space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Contraseña para Acceso al Portal B2B *
-                </label>
+              {/* Campo 1: Contraseña con máscara estricta */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Contraseña para Acceso al Portal B2B *
+                  </label>
+                  <span className={`text-[10px] font-bold ${passwordStrength.color}`}>
+                    {passwordStrength.label}
+                  </span>
+                </div>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type={showPassword ? 'text' : 'password'}
                     value={adminPassword}
                     onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder="Mínimo 6 caracteres"
+                    placeholder="••••••••••••"
+                    autoComplete="new-password"
                     className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                    title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
+
+              {/* Campo 2: Confirmar Contraseña */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Confirmar Contraseña *
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={adminConfirmPassword}
+                    onChange={(e) => setAdminConfirmPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    autoComplete="new-password"
+                    className={`w-full pl-10 pr-10 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-100 outline-none ${
+                      adminConfirmPassword && adminPassword !== adminConfirmPassword
+                        ? 'border-rose-500 focus:border-rose-500'
+                        : 'border-slate-200 dark:border-slate-700 focus:border-purple-600'
+                    }`}
+                    required
+                  />
+                  {adminConfirmPassword && adminPassword === adminConfirmPassword && (
+                    <Check className="w-4 h-4 text-emerald-500 absolute right-3.5 top-1/2 -translate-y-1/2" />
+                  )}
+                </div>
+                {adminConfirmPassword && adminPassword !== adminConfirmPassword && (
+                  <p className="text-[10px] text-rose-500 font-bold mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Las contraseñas no coinciden.
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Resumen del Pedido */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-bold text-slate-900 dark:text-white">
-                  Resumen: {selectedPlan.name} ({billingCycle === 'annual' ? 'Anual' : 'Mensual'})
-                </span>
-                <p className="text-[11px] text-slate-500">
-                  Cupo de hasta {selectedPlan.maxCards} tarjetas digitales • Panel B2B completo
+            {/* Banner de Seguridad y Privacidad */}
+            <div className="p-4 rounded-2xl bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200/80 dark:border-purple-800/60 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-xs">
+                <span className="font-bold text-slate-900 dark:text-white">Privacidad y Seguridad Garantizada</span>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Tus credenciales están protegidas con encriptación militar en la nube (bcrypt/Argon2). Tu clave nunca se almacena en texto plano ni es visible para terceros.
                 </p>
-              </div>
-
-              <div className="text-right">
-                <span className="text-lg font-black text-purple-600">
-                  ${billingCycle === 'annual' ? selectedPlan.priceAnnual : selectedPlan.priceMonthly}
-                  <span className="text-xs font-normal text-slate-400">/mes</span>
-                </span>
               </div>
             </div>
 
@@ -983,6 +1217,238 @@ function CrearEmpresaContent() {
               <button
                 type="button"
                 onClick={() => setStep(2)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-50"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Volver</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!adminName.trim() || !adminEmail.trim() || !adminPassword.trim()) {
+                    alert('Por favor completa todos los campos obligatorios del administrador.');
+                    return;
+                  }
+                  if (adminPassword.length < 6) {
+                    alert('La contraseña debe tener al menos 6 caracteres.');
+                    return;
+                  }
+                  if (adminPassword !== adminConfirmPassword) {
+                    alert('Las contraseñas no coinciden. Por favor verifícalas antes de continuar.');
+                    return;
+                  }
+                  setStep(4);
+                }}
+                className="px-6 py-3 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-black text-sm shadow-md shadow-purple-600/30 flex items-center gap-2 transition-transform hover:scale-[1.02]"
+              >
+                <span>Siguiente: Pago y Verificación</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── PASO 4: VERIFICACIÓN DE PAGO & ACTIVACIÓN B2B ── */}
+        {step === 4 && (
+          <form
+            onSubmit={handleCreateCompany}
+            className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6 animate-in fade-in"
+          >
+            <div className="border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-purple-600" />
+                    <span>Verificación de Pago y Activación de Cuenta</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Selecciona tu método de pago preferido e ingresa el comprobante o referencia bancaria.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Resumen del Monto a Pagar */}
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-purple-500/10 via-slate-50 dark:via-slate-800/40 to-brand-blue/10 border border-purple-200/80 dark:border-purple-800/60 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div>
+                <span className="text-xs font-bold text-purple-700 dark:text-purple-300 block uppercase tracking-wider text-[10px]">
+                  Resumen de Suscripción
+                </span>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                  {selectedPlan.name} ({billingCycle === 'annual' ? 'Facturación Anual' : 'Facturación Mensual'})
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Cupo para {selectedPlan.maxCards} tarjetas digitales • Brand Lock • CRM B2B
+                </p>
+                {appliedCoupon && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 mt-1">
+                    <Ticket className="w-3.5 h-3.5" /> Cupón {appliedCoupon.code} aplicado (-${couponDiscount} USD)
+                  </span>
+                )}
+              </div>
+
+              <div className="text-right">
+                <span className="text-slate-400 text-xs block">Total a transferir:</span>
+                <div className="text-3xl font-black text-purple-600 dark:text-purple-400">
+                  ${finalPrice} <span className="text-xs font-bold text-slate-400">USD</span>
+                </div>
+                {finalPrice === 0 && (
+                  <span className="text-xs font-bold text-emerald-600">¡100% Bonificado con Cupón!</span>
+                )}
+              </div>
+            </div>
+
+            {/* Métodos de Pago Disponibles */}
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                Selecciona tu Método de Pago:
+              </label>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('pago_movil')}
+                  className={`p-3.5 rounded-2xl border text-left transition-all ${
+                    paymentMethod === 'pago_movil'
+                      ? 'border-purple-600 bg-purple-50/60 dark:bg-purple-950/40 text-purple-700 ring-2 ring-purple-600/20'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="text-base mb-1">📱</div>
+                  <div className="font-black text-xs">Pago Móvil</div>
+                  <div className="text-[10px] text-slate-400">Venezuela (Bs)</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('zelle')}
+                  className={`p-3.5 rounded-2xl border text-left transition-all ${
+                    paymentMethod === 'zelle'
+                      ? 'border-purple-600 bg-purple-50/60 dark:bg-purple-950/40 text-purple-700 ring-2 ring-purple-600/20'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="text-base mb-1">⚡</div>
+                  <div className="font-black text-xs">Zelle</div>
+                  <div className="text-[10px] text-slate-400">Transferencia USD</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('transfer')}
+                  className={`p-3.5 rounded-2xl border text-left transition-all ${
+                    paymentMethod === 'transfer'
+                      ? 'border-purple-600 bg-purple-50/60 dark:bg-purple-950/40 text-purple-700 ring-2 ring-purple-600/20'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="text-base mb-1">🏦</div>
+                  <div className="font-black text-xs">Transferencia</div>
+                  <div className="text-[10px] text-slate-400">Banesco / Mercantil</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('card')}
+                  className={`p-3.5 rounded-2xl border text-left transition-all ${
+                    paymentMethod === 'card'
+                      ? 'border-purple-600 bg-purple-50/60 dark:bg-purple-950/40 text-purple-700 ring-2 ring-purple-600/20'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="text-base mb-1">💳</div>
+                  <div className="font-black text-xs">Tarjeta Int.</div>
+                  <div className="text-[10px] text-slate-400">Visa / Mastercard</div>
+                </button>
+              </div>
+            </div>
+
+            {/* Datos Bancarios Oficiales de ProConnect */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs space-y-2">
+              <div className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <Receipt className="w-4 h-4 text-purple-600" />
+                <span>Datos Oficiales para Realizar el Pago:</span>
+              </div>
+
+              {paymentMethod === 'pago_movil' && (
+                <div className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300 font-mono">
+                  <div><strong>Banco:</strong> Banesco (0134)</div>
+                  <div><strong>Teléfono:</strong> 0424-2565014</div>
+                  <div><strong>Cédula / RIF:</strong> V-24.256.014</div>
+                  <div><strong>Titular:</strong> Luigi Colonico / ProConnect C.A.</div>
+                  <div className="text-slate-400 font-sans mt-1">Tasa oficial BCV del día aplicada a la fecha del pago.</div>
+                </div>
+              )}
+
+              {paymentMethod === 'zelle' && (
+                <div className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300 font-mono">
+                  <div><strong>Correo Zelle:</strong> luigicolonico@gmail.com</div>
+                  <div><strong>Titular:</strong> Luigi Colonico / ProConnect</div>
+                  <div className="text-slate-400 font-sans mt-1">Colocar en el memo o nota el nombre de tu empresa ({companyName || 'Empresa'}).</div>
+                </div>
+              )}
+
+              {paymentMethod === 'transfer' && (
+                <div className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300 font-mono">
+                  <div><strong>Banco:</strong> Banesco Banco Universal</div>
+                  <div><strong>Cuenta Corriente:</strong> 0134-0371-29-3711000000</div>
+                  <div><strong>RIF:</strong> J-50123456-7</div>
+                  <div><strong>Beneficiario:</strong> ProConnect Tecnologías C.A.</div>
+                </div>
+              )}
+
+              {paymentMethod === 'card' && (
+                <div className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300">
+                  <p>Pasarela de pago internacional segura procesada con cifrado SSL de 256 bits.</p>
+                  <p className="text-slate-400 font-sans">Si tu pago fue realizado mediante pasarela en línea, ingresa el ID de transacción a continuación.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Campos de Comprobante y Referencia */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Número de Referencia Bancaria / Confirmación Zelle *
+                </label>
+                <div className="relative">
+                  <FileText className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={paymentReference}
+                    onChange={(e) => setPaymentReference(e.target.value)}
+                    placeholder={finalPrice === 0 ? 'Cupón 100% Bonificado' : 'Ej. 084920492 / ZL-39201'}
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-bold text-slate-800 dark:text-slate-100 outline-none focus:border-purple-600"
+                    required={finalPrice > 0}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Adjuntar Comprobante (Captura o Foto)
+                </label>
+                <label className="cursor-pointer block">
+                  <div className="w-full py-2.5 px-3.5 rounded-xl border border-dashed border-purple-300 dark:border-purple-800 hover:border-purple-500 bg-purple-50/30 dark:bg-purple-950/20 text-xs font-bold text-purple-600 flex items-center justify-center gap-2 transition-colors">
+                    <Upload className="w-4 h-4" />
+                    <span>{uploadingReceipt ? 'Subiendo comprobante...' : receiptUrl ? '✅ Comprobante Adjuntado' : 'Subir Imagen del Comprobante'}</span>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleReceiptUpload}
+                    disabled={uploadingReceipt}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center pt-4 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setStep(3)}
                 disabled={isSubmitting}
                 className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-50"
               >
@@ -993,17 +1459,17 @@ function CrearEmpresaContent() {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 to-brand-blue hover:from-purple-500 hover:to-brand-blue/90 text-white font-black text-sm shadow-xl shadow-purple-600/30 flex items-center gap-2 transition-transform hover:scale-[1.02] disabled:opacity-50"
+                className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 to-brand-blue hover:from-purple-500 hover:to-brand-blue/90 text-white font-black text-sm shadow-xl shadow-purple-600/30 flex items-center gap-2 transition-transform hover:scale-[1.02] disabled:opacity-50 cursor-pointer"
               >
                 {isSubmitting ? (
                   <>
                     <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Creando Organización &amp; Administrador...</span>
+                    <span>Registrando Empresa &amp; Activando Portal...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Crear Cuenta de Empresa &amp; Activar Portal</span>
+                    <span>Confirmar Pago &amp; Activar Portal B2B</span>
                   </>
                 )}
               </button>
@@ -1011,8 +1477,8 @@ function CrearEmpresaContent() {
           </form>
         )}
 
-        {/* ── PASO 4: ÉXITO Y ENTRADA AL DASHBOARD B2B ── */}
-        {step === 4 && (
+        {/* ── PASO 5: ÉXITO Y ENTRADA DIRECTA AL DASHBOARD B2B ── */}
+        {step === 5 && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 sm:p-12 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-6 max-w-xl mx-auto animate-in zoom-in-95">
             <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="w-8 h-8" />
@@ -1020,34 +1486,38 @@ function CrearEmpresaContent() {
 
             <div className="space-y-2">
               <h2 className="text-2xl font-black text-slate-900 dark:text-white">
-                ¡Empresa Creada Exitosamente!
+                ¡Empresa Creada &amp; Pago Registrado!
               </h2>
               <p className="text-sm text-slate-600 dark:text-slate-400">
-                La organización <strong>{companyName}</strong> está activa y <strong>{adminName}</strong> ha sido configurado como su Administrador Principal con rol <code>org_admin</code>.
+                La organización <strong>{companyName}</strong> está registrada y <strong>{adminName}</strong> ha sido configurado como su Administrador Principal con rol <code>org_admin</code>.
               </p>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-left space-y-2 text-xs">
               <div className="flex items-center justify-between text-slate-700 dark:text-slate-300">
-                <span className="font-semibold">Cupo disponible:</span>
-                <span className="font-bold text-purple-600">{selectedPlan.maxCards} Colaboradores</span>
+                <span className="font-semibold">Plan Activado:</span>
+                <span className="font-bold text-purple-600">{selectedPlan.name} ({selectedPlan.maxCards} Tarjetas)</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-700 dark:text-slate-300">
+                <span className="font-semibold">Pago / Referencia:</span>
+                <span className="font-mono text-emerald-600 font-bold">{paymentReference || 'Bonificado 100%'}</span>
               </div>
               <div className="flex items-center justify-between text-slate-700 dark:text-slate-300">
                 <span className="font-semibold">Brand Lock:</span>
                 <span className="font-bold text-emerald-600">{enforceBrandLock ? 'Activo' : 'Inactivo'}</span>
               </div>
               <div className="flex items-center justify-between text-slate-700 dark:text-slate-300">
-                <span className="font-semibold">Acceso inmediato:</span>
+                <span className="font-semibold">Usuario Administrador:</span>
                 <span className="font-mono text-[11px] text-slate-500">{adminEmail}</span>
               </div>
             </div>
 
-            <div className="pt-4 flex flex-col sm:flex-row gap-3">
+            <div className="pt-4 flex flex-col gap-3">
               <Link
                 href="/org-dashboard"
-                className="flex-1 py-3.5 px-6 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-black text-sm shadow-md shadow-purple-600/30 flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
+                className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-purple-600 to-brand-blue hover:from-purple-500 hover:to-brand-blue/90 text-white font-black text-sm shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
               >
-                <span>Ir al Panel Corporativo B2B</span>
+                <span>Entrar Ahora al Panel B2B (Org Admin)</span>
                 <ArrowRight className="w-4 h-4" />
               </Link>
             </div>
@@ -1073,4 +1543,3 @@ export default function CrearEmpresaPage() {
     </React.Suspense>
   );
 }
-

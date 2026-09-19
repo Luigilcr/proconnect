@@ -32,12 +32,25 @@ function LoginForm() {
   useEffect(() => {
     if (searchParams.get('reason') === 'timeout') return;
     if (isSupabaseEnabled && supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
+      supabase.auth.getSession().then(async ({ data: { session } }) => {
         if (session?.user) {
           if (isSuperAdminEmail(session.user.email)) {
             window.location.href = '/admin';
           } else {
-            window.location.href = redirectTo;
+            let role = 'client';
+            if (supabase) {
+              const { data: profile } = await supabase
+                .from('users')
+                .select('role')
+                .eq('id', session.user.id)
+                .single();
+              role = profile?.role ?? 'client';
+            }
+            if (role === 'org_admin') {
+              window.location.href = '/org-dashboard';
+            } else {
+              window.location.href = redirectTo;
+            }
           }
         }
       });

@@ -7,11 +7,13 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { FullCard, SystemMetrics, User, UserRole, Organization, OrgType } from '@/lib/types';
+import { FullCard, SystemMetrics, User, UserRole, Organization, OrgType, DiscountCoupon, OrganizationPayment } from '@/lib/types';
 import {
   Users,
   CreditCard,
   CheckCircle,
+  CheckCircle2,
+  XCircle,
   Link2,
   FileText,
   ExternalLink,
@@ -37,6 +39,12 @@ import {
   Award,
   Sparkles,
   ArrowUpRight,
+  Ticket,
+  Tag,
+  Percent,
+  DollarSign,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
 import { getAnalyticsForCard } from '@/lib/data/card-store';
@@ -1457,4 +1465,561 @@ export const MonthlyGrowthDashboard: React.FC<MonthlyGrowthDashboardProps> = ({
     </div>
   );
 };
+
+// ============================================================================
+// GESTOR DE CUPONES DE DESCUENTO B2B
+// ============================================================================
+
+interface CouponManagementTableProps {
+  coupons: DiscountCoupon[];
+  onCreateCoupon: (coupon: DiscountCoupon) => void;
+  onToggleCoupon: (couponId: string) => void;
+  onDeleteCoupon: (couponId: string) => void;
+}
+
+export const CouponManagementTable: React.FC<CouponManagementTableProps> = ({
+  coupons,
+  onCreateCoupon,
+  onToggleCoupon,
+  onDeleteCoupon,
+}) => {
+  const [showModal, setShowModal] = React.useState(false);
+  const [copiedCode, setCopiedCode] = React.useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = React.useState('');
+
+  // Form state
+  const [code, setCode] = React.useState('');
+  const [discountType, setDiscountType] = React.useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue, setDiscountValue] = React.useState<number>(20);
+  const [applicablePlan, setApplicablePlan] = React.useState<'all' | 'pyme' | 'corporativo' | 'enterprise'>('all');
+  const [maxUses, setMaxUses] = React.useState<string>('');
+  const [expiresAt, setExpiresAt] = React.useState<string>('');
+  const [notes, setNotes] = React.useState<string>('');
+
+  const handleCopy = (couponCode: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(couponCode);
+      setCopiedCode(couponCode);
+      setTimeout(() => setCopiedCode(null), 2000);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!code.trim()) {
+      alert('Por favor ingresa un código de cupón.');
+      return;
+    }
+
+    const newCoupon: DiscountCoupon = {
+      id: 'coup_' + Date.now(),
+      code: code.toUpperCase().trim().replace(/[^A-Z0-9_-]/g, ''),
+      discount_type: discountType,
+      discount_value: Number(discountValue) || 10,
+      applicable_plan: applicablePlan,
+      max_uses: maxUses ? parseInt(maxUses, 10) : null,
+      times_used: 0,
+      expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
+      is_active: true,
+      created_at: new Date().toISOString(),
+      notes: notes.trim() || null,
+    };
+
+    onCreateCoupon(newCoupon);
+    setShowModal(false);
+    setCode('');
+    setDiscountValue(20);
+    setMaxUses('');
+    setExpiresAt('');
+    setNotes('');
+  };
+
+  const filteredCoupons = coupons.filter(
+    (c) =>
+      c.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (c.notes && c.notes.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 border border-purple-200 dark:border-purple-800">
+              <Ticket className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              Cupones de Descuento B2B
+            </h3>
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
+              {coupons.length} activos
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-1">
+            Genera promociones para planes empresariales, incentiva conversiones y audita cuántas veces se usan.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Buscar cupón..."
+              className="pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold outline-none focus:border-purple-600"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-md shadow-purple-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Crear Cupón</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Tabla de Cupones */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+              <th className="py-3 px-3">Código</th>
+              <th className="py-3 px-3">Descuento</th>
+              <th className="py-3 px-3">Plan Válido</th>
+              <th className="py-3 px-3">Usos</th>
+              <th className="py-3 px-3">Vigencia</th>
+              <th className="py-3 px-3">Estado</th>
+              <th className="py-3 px-3 text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {filteredCoupons.map((coupon) => (
+              <tr key={coupon.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                <td className="py-3 px-3 font-mono font-black text-slate-900 dark:text-white">
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded-lg bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300">
+                      {coupon.code}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(coupon.code)}
+                      className="text-slate-400 hover:text-purple-600 p-1"
+                      title="Copiar código"
+                    >
+                      {copiedCode === coupon.code ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  {coupon.notes && <p className="text-[10px] text-slate-400 font-sans mt-0.5">{coupon.notes}</p>}
+                </td>
+
+                <td className="py-3 px-3 font-bold text-slate-700 dark:text-slate-300">
+                  <span className="inline-flex items-center gap-1 text-emerald-600 font-black">
+                    {coupon.discount_type === 'percentage' ? (
+                      <>
+                        <Percent className="w-3 h-3" />
+                        <span>{coupon.discount_value}% OFF</span>
+                      </>
+                    ) : (
+                      <>
+                        <DollarSign className="w-3 h-3" />
+                        <span>${coupon.discount_value} USD OFF</span>
+                      </>
+                    )}
+                  </span>
+                </td>
+
+                <td className="py-3 px-3">
+                  <span className="capitalize px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold text-[11px]">
+                    {coupon.applicable_plan === 'all' ? 'Todos los Planes' : coupon.applicable_plan}
+                  </span>
+                </td>
+
+                <td className="py-3 px-3 font-semibold text-slate-700 dark:text-slate-300">
+                  <span className="font-bold text-purple-600">{coupon.times_used}</span> /{' '}
+                  <span className="text-slate-400">{coupon.max_uses === null ? '∞' : coupon.max_uses}</span>
+                </td>
+
+                <td className="py-3 px-3 text-slate-500">
+                  {coupon.expires_at ? (
+                    new Date(coupon.expires_at).toLocaleDateString()
+                  ) : (
+                    <span className="text-emerald-600 font-semibold">Permanente</span>
+                  )}
+                </td>
+
+                <td className="py-3 px-3">
+                  <button
+                    type="button"
+                    onClick={() => onToggleCoupon(coupon.id)}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-colors ${
+                      coupon.is_active
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 border-emerald-300'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200'
+                    }`}
+                  >
+                    {coupon.is_active ? 'Activo' : 'Desactivado'}
+                  </button>
+                </td>
+
+                <td className="py-3 px-3 text-right">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`¿Eliminar el cupón ${coupon.code}?`)) {
+                        onDeleteCoupon(coupon.id);
+                      }
+                    }}
+                    className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                    title="Eliminar cupón"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {filteredCoupons.length === 0 && (
+              <tr>
+                <td colSpan={7} className="py-8 text-center text-slate-400">
+                  No hay cupones registrados. ¡Crea el primero para tus promociones B2B!
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modal Crear Cupón */}
+      {showModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-purple-600">
+                <Ticket className="w-5 h-5" />
+                <h4 className="font-black text-slate-900 dark:text-white text-base">Crear Cupón de Descuento</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700 dark:text-slate-300">Código del Cupón *</label>
+                <input
+                  type="text"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  placeholder="EJ: PROMO50, EMPRESAS20"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 uppercase font-mono font-bold outline-none focus:border-purple-600"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700 dark:text-slate-300">Tipo de Descuento</label>
+                  <select
+                    value={discountType}
+                    onChange={(e: any) => setDiscountType(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold outline-none"
+                  >
+                    <option value="percentage">Porcentaje (%)</option>
+                    <option value="fixed">Monto Fijo ($ USD)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700 dark:text-slate-300">Valor de Descuento *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={discountType === 'percentage' ? 100 : 1000}
+                    value={discountValue}
+                    onChange={(e) => setDiscountValue(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold outline-none focus:border-purple-600"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700 dark:text-slate-300">Plan B2B Aplicable</label>
+                <select
+                  value={applicablePlan}
+                  onChange={(e: any) => setApplicablePlan(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold outline-none"
+                >
+                  <option value="all">Todos los Planes</option>
+                  <option value="pyme">Solo Plan Pyme</option>
+                  <option value="corporativo">Solo Plan Corporativo</option>
+                  <option value="enterprise">Solo Plan Enterprise</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700 dark:text-slate-300">Límite de Canjes</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={maxUses}
+                    onChange={(e) => setMaxUses(e.target.value)}
+                    placeholder="Ilimitado"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700 dark:text-slate-300">Fecha Límite</label>
+                  <input
+                    type="date"
+                    value={expiresAt}
+                    onChange={(e) => setExpiresAt(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700 dark:text-slate-300">Descripción / Nota</label>
+                <input
+                  type="text"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Ej: Descuento para feria comercial"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-medium outline-none"
+                />
+              </div>
+
+              <div className="pt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowModal(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold shadow-md shadow-purple-600/20"
+                >
+                  Guardar Cupón
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// AUDITORÍA Y CONTROL DE PAGOS B2B
+// ============================================================================
+
+interface PaymentAuditTableProps {
+  payments: OrganizationPayment[];
+  onUpdateStatus: (paymentId: string, status: 'pending' | 'verified' | 'rejected') => void;
+}
+
+export const PaymentAuditTable: React.FC<PaymentAuditTableProps> = ({
+  payments,
+  onUpdateStatus,
+}) => {
+  const [selectedReceipt, setSelectedReceipt] = React.useState<string | null>(null);
+
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 border border-blue-200 dark:border-blue-800">
+              <CreditCard className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              Bandeja de Pagos B2B y Comprobantes
+            </h3>
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+              {payments.filter((p) => p.status === 'pending').length} pendientes
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-1">
+            Audita los comprobantes de pago móvil, Zelle y transferencias recibidos por suscripciones corporativas.
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+              <th className="py-3 px-3">Empresa &amp; Admin</th>
+              <th className="py-3 px-3">Plan</th>
+              <th className="py-3 px-3">Monto Total</th>
+              <th className="py-3 px-3">Método &amp; Referencia</th>
+              <th className="py-3 px-3">Cupón</th>
+              <th className="py-3 px-3">Estado</th>
+              <th className="py-3 px-3 text-right">Validación</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {payments.map((p) => (
+              <tr key={p.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                <td className="py-3 px-3">
+                  <div className="font-bold text-slate-900 dark:text-white">{p.organization_name}</div>
+                  <div className="text-[11px] text-slate-400">{p.admin_email}</div>
+                  {p.admin_phone && <div className="text-[10px] text-slate-500">{p.admin_phone}</div>}
+                </td>
+
+                <td className="py-3 px-3">
+                  <div className="font-bold text-slate-800 dark:text-slate-200">{p.plan_name}</div>
+                  <div className="text-[10px] text-slate-400 uppercase">
+                    {p.billing_cycle === 'annual' ? 'Facturación Anual' : 'Facturación Mensual'}
+                  </div>
+                </td>
+
+                <td className="py-3 px-3 font-mono font-black text-slate-900 dark:text-white">
+                  ${p.total_paid} USD
+                  {p.discount_amount > 0 && (
+                    <div className="text-[10px] text-emerald-600 font-sans font-bold">
+                      Ahorro: -${p.discount_amount}
+                    </div>
+                  )}
+                </td>
+
+                <td className="py-3 px-3">
+                  <span className="capitalize px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-bold text-[10px] text-slate-700 dark:text-slate-300">
+                    {p.payment_method === 'pago_movil'
+                      ? '📱 Pago Móvil'
+                      : p.payment_method === 'zelle'
+                      ? '⚡ Zelle'
+                      : p.payment_method === 'card'
+                      ? '💳 Tarjeta'
+                      : '🏦 Transferencia'}
+                  </span>
+                  <div className="font-mono text-[11px] font-bold text-slate-600 dark:text-slate-400 mt-1">
+                    Ref: {p.reference_number || 'S/N'}
+                  </div>
+                  {p.receipt_url && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedReceipt(p.receipt_url)}
+                      className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1 mt-0.5"
+                    >
+                      <Eye className="w-3 h-3" /> Ver Comprobante
+                    </button>
+                  )}
+                </td>
+
+                <td className="py-3 px-3 font-mono text-[11px]">
+                  {p.coupon_code ? (
+                    <span className="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-bold border border-purple-200">
+                      {p.coupon_code}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
+
+                <td className="py-3 px-3">
+                  <span
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      p.status === 'verified'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 border border-emerald-300'
+                        : p.status === 'rejected'
+                        ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 border border-rose-300'
+                        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 border border-amber-300'
+                    }`}
+                  >
+                    {p.status === 'verified' ? (
+                      <>
+                        <CheckCircle2 className="w-3 h-3" /> Verificado
+                      </>
+                    ) : p.status === 'rejected' ? (
+                      <>
+                        <XCircle className="w-3 h-3" /> Rechazado
+                      </>
+                    ) : (
+                      <>
+                        <Clock className="w-3 h-3" /> Pendiente
+                      </>
+                    )}
+                  </span>
+                </td>
+
+                <td className="py-3 px-3 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    {p.status !== 'verified' && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStatus(p.id, 'verified')}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition-colors shadow-sm"
+                        title="Aprobar pago y confirmar activación"
+                      >
+                        Aprobar
+                      </button>
+                    )}
+                    {p.status !== 'rejected' && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStatus(p.id, 'rejected')}
+                        className="px-2.5 py-1 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 text-[10px] font-bold transition-colors"
+                        title="Rechazar pago"
+                      >
+                        Rechazar
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {payments.length === 0 && (
+              <tr>
+                <td colSpan={7} className="py-8 text-center text-slate-400">
+                  No hay pagos B2B registrados todavía.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modal visor de comprobante */}
+      {selectedReceipt && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-sm text-slate-900 dark:text-white">Comprobante de Pago B2B</h4>
+              <button
+                type="button"
+                onClick={() => setSelectedReceipt(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 max-h-[70vh] flex items-center justify-center bg-slate-100 dark:bg-slate-950">
+              <img src={selectedReceipt} alt="Comprobante de Pago" className="max-w-full max-h-[70vh] object-contain" />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 

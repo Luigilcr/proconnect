@@ -33,7 +33,17 @@ import {
   UserManagementTable,
   OrganizationManagementTable,
   MonthlyGrowthDashboard,
+  CouponManagementTable,
+  PaymentAuditTable,
 } from '@/components/admin/AdminComponents';
+import { DiscountCoupon, OrganizationPayment } from '@/lib/types';
+import {
+  getStoredCoupons,
+  saveCoupon,
+  deleteCoupon,
+  getStoredPayments,
+  updatePaymentStatus,
+} from '@/lib/data/coupon-store';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
@@ -46,6 +56,8 @@ export default function SuperadminPage() {
   const [cards, setCards] = useState<FullCard[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [coupons, setCoupons] = useState<DiscountCoupon[]>([]);
+  const [payments, setPayments] = useState<OrganizationPayment[]>([]);
   const [purgeToast, setPurgeToast] = useState<boolean>(false);
   const [metrics, setMetrics] = useState<SystemMetrics>({
     totalUsers: 0,
@@ -245,6 +257,32 @@ export default function SuperadminPage() {
       totalViews: totalV,
       totalLeads: totalL,
     });
+
+    setCoupons(getStoredCoupons());
+    setPayments(getStoredPayments());
+  };
+
+  const handleCreateCoupon = (newCoupon: DiscountCoupon) => {
+    saveCoupon(newCoupon);
+    setCoupons(getStoredCoupons());
+  };
+
+  const handleToggleCoupon = (couponId: string) => {
+    const target = coupons.find((c) => c.id === couponId);
+    if (target) {
+      saveCoupon({ ...target, is_active: !target.is_active });
+      setCoupons(getStoredCoupons());
+    }
+  };
+
+  const handleDeleteCoupon = (couponId: string) => {
+    deleteCoupon(couponId);
+    setCoupons(getStoredCoupons());
+  };
+
+  const handleUpdatePaymentStatus = (paymentId: string, status: 'pending' | 'verified' | 'rejected') => {
+    updatePaymentStatus(paymentId, status);
+    setPayments(getStoredPayments());
   };
 
   useEffect(() => {
@@ -541,7 +579,25 @@ export default function SuperadminPage() {
           />
         </section>
 
-        {/* 3. Tabla de Tarjetas NFC */}
+        {/* 4. Bandeja de Pagos B2B y Comprobantes Bancarios */}
+        <section>
+          <PaymentAuditTable
+            payments={payments}
+            onUpdateStatus={handleUpdatePaymentStatus}
+          />
+        </section>
+
+        {/* 5. Cupones de Descuento B2B */}
+        <section>
+          <CouponManagementTable
+            coupons={coupons}
+            onCreateCoupon={handleCreateCoupon}
+            onToggleCoupon={handleToggleCoupon}
+            onDeleteCoupon={handleDeleteCoupon}
+          />
+        </section>
+
+        {/* 6. Tabla de Tarjetas NFC */}
         <section>
           <CardManagementTable
             cards={cards}

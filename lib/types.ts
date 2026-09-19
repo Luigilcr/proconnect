@@ -356,3 +356,41 @@ export interface RestaurantKPIs {
   lowSellingItems: { name: string; qty: number; revenue: number }[];
   avgPreparationMinutes: number;
 }
+
+// ── SISTEMA DE CUPONES DE DESCUENTO B2B ──
+export interface DiscountCoupon {
+  id: string;
+  code: string;
+  discount_type: 'percentage' | 'fixed';
+  discount_value: number;
+  applicable_plan: 'all' | 'pyme' | 'corporativo' | 'enterprise';
+  max_uses: number | null;
+  times_used: number;
+  expires_at: string | null;
+  is_active: boolean;
+  created_at: string;
+  notes?: string | null;
+}
+
+// ── REGISTRO Y AUDITORÍA DE PAGOS B2B ──
+export interface OrganizationPayment {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  plan_id: string;
+  plan_name: string;
+  billing_cycle: 'monthly' | 'annual';
+  subtotal: number;
+  discount_amount: number;
+  total_paid: number;
+  coupon_code: string | null;
+  payment_method: 'card' | 'transfer' | 'pago_movil' | 'zelle';
+  reference_number: string;
+  receipt_url: string | null;
+  admin_email: string;
+  admin_name: string;
+  admin_phone?: string | null;
+  status: 'pending' | 'verified' | 'rejected';
+  created_at: string;
+}
+
