@@ -1328,6 +1328,32 @@ export default function CrearTarjetaPage() {
                     </span>
                   </div>
 
+                  {/* Banner Directo de Acción para Publicar (Imposible de Perder) */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border-2 border-emerald-400/40 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm">
+                    <div className="flex items-center gap-3 text-center sm:text-left">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                        <Sparkles className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-slate-900">
+                          ¿Te gusta cómo se ve tu tarjeta en el simulador?
+                        </p>
+                        <p className="text-[11px] text-slate-600">
+                          Plantilla actual: <strong className="text-emerald-700 font-bold">{activeTemplate.name}</strong> • ¡Púlsalo para activarla!
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleFinishAndSave}
+                      disabled={isPublishing}
+                      className="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95 shrink-0"
+                    >
+                      <span>🚀 Guardar y Publicar Ahora</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
                   {/* Selector de Modo en Pantallas Móviles (lg:hidden) */}
                   <div className="lg:hidden flex items-center p-1 bg-slate-100 rounded-2xl border border-slate-200 shadow-inner">
                     <button
@@ -1812,11 +1838,64 @@ export default function CrearTarjetaPage() {
               <p className="text-[11px] text-slate-400 mt-3 text-center">
                 Mira cómo cambia en vivo al cambiar tus datos o plantilla.
               </p>
+
+              {/* Botón de Acción Principal Directo bajo el Simulador */}
+              {step !== 3 && (
+                <div className="w-full max-w-[340px] sm:max-w-[360px] mt-4 space-y-2">
+                  <button
+                    type="button"
+                    onClick={step === 1 ? goToStep2 : handleFinishAndSave}
+                    disabled={isPublishing}
+                    className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2.5 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    <span>{step === 1 ? 'Continuar a Elegir Plantilla →' : '🚀 Guardar y Publicar Tarjeta'}</span>
+                    <Sparkles className="w-4 h-4 text-emerald-200" />
+                  </button>
+                  <p className="text-[11px] text-slate-400 text-center font-medium">
+                    {step === 1 ? 'Paso 1 de 3 • Tus datos se sincronizan en tiempo real' : '¡Casi listo! Pulsa para activar tu enlace y chip NFC'}
+                  </p>
+                </div>
+              )}
             </div>
 
           </div>
 
         </div>
+
+        {/* Barra de Acción Flotante Fija Inferior (Garantiza que NUNCA se pierda el botón) */}
+        {step !== 3 && (
+          <div className="fixed bottom-0 left-0 right-0 z-40 p-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl">
+            <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 hidden sm:inline">
+                  {step === 1 ? 'Paso 1: Contacto e Identidad' : `Plantilla Activa: ${activeTemplate.name}`}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                {step === 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="px-3 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors"
+                  >
+                    ← Volver
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={step === 1 ? goToStep2 : handleFinishAndSave}
+                  disabled={isPublishing}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-95"
+                >
+                  <span>{step === 1 ? 'Continuar a Elegir Plantilla →' : '🚀 Guardar y Publicar Tarjeta'}</span>
+                  <Check className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Modal de Autenticación Product-Led */}
