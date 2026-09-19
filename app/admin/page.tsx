@@ -154,14 +154,15 @@ export default function SuperadminPage() {
     }
 
     // 3. Filtrar estrictamente cualquier residuo de demo o tarjetas eliminadas
+    // Las tarjetas reales provenientes de Supabase tienen máxima prioridad y nunca son bloqueadas por listas viejas locales
+    const isRealCard = (id: string, slug: string) => realCards.some((rc) => rc.id === id || rc.slug.toLowerCase() === slug.toLowerCase());
     const finalCards = [...realCards, ...localCards.filter((c) => !realCards.some((rc) => rc.id === c.id))]
       .filter(
         (c) =>
           c &&
           c.slug &&
           !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim()) &&
-          !deletedCardIds.has(c.id) &&
-          !deletedCardSlugs.has(c.slug.toLowerCase().trim())
+          (isRealCard(c.id, c.slug) || (!deletedCardIds.has(c.id) && !deletedCardSlugs.has(c.slug.toLowerCase().trim())))
       );
 
     const finalOrgs = [...realOrgs, ...localOrgs.filter((o) => !realOrgs.some((ro) => ro.id === o.id))]
@@ -214,12 +215,12 @@ export default function SuperadminPage() {
       adminUser.role = 'superadmin';
     }
 
+    const isRealUser = (id: string, email: string) => realUsers.some((ru) => ru.id === id || ru.email.toLowerCase() === email.toLowerCase());
     const finalUsers = Array.from(usersMap.values()).filter(
       (u) =>
         u &&
         !DEMO_USER_EMAILS.has(u.email.toLowerCase().trim()) &&
-        !deletedUserIds.has(u.id) &&
-        !deletedUserEmails.has(u.email.toLowerCase().trim())
+        (isSuperAdminEmail(u.email) || isRealUser(u.id, u.email) || (!deletedUserIds.has(u.id) && !deletedUserEmails.has(u.email.toLowerCase().trim())))
     );
 
     setUsers(finalUsers);
@@ -391,12 +392,15 @@ export default function SuperadminPage() {
     if (isSupabaseEnabled && supabase) {
       try {
         await supabase.from('users').delete().eq('id', userId);
+        if (targetUser?.email) {
+          await supabase.from('users').delete().ilike('email', targetUser.email.trim());
+        }
       } catch (err) {
         console.warn('Error eliminando usuario de Supabase:', err);
       }
     }
 
-    setUsers((prev) => prev.filter((u) => u.id !== userId));
+    setUsers((prev) => prev.filter((u) => u.id !== userId && (!targetUser?.email || u.email.toLowerCase() !== targetUser.email.toLowerCase())));
     setCards((prev) => prev.filter((c) => c.user_id !== userId));
 
     await loadData();

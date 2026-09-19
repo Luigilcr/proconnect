@@ -10,7 +10,7 @@ import { FullCard, CardLink, CatalogMultimedia } from '@/lib/types';
 import { getStoredCards, saveCard, renewCardSubscription, persistCards } from '@/lib/data/card-store';
 import { saveDashboardDraft, loadDashboardDraft, clearDashboardDraft } from '@/lib/draft-store';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
-import { normalizeCardForDatabase, isSuperAdminEmail } from '@/lib/db-normalize';
+import { normalizeCardForDatabase, isSuperAdminEmail, getSupabaseCardPayload, generateUuid, isValidUuid } from '@/lib/db-normalize';
 import { IdentityEditor } from '@/components/dashboard/IdentityEditor';
 import { DesignCustomizer } from '@/components/dashboard/DesignCustomizer';
 import { LinksEditor } from '@/components/dashboard/LinksEditor';
@@ -43,6 +43,7 @@ import {
   Wifi,
   Users,
   BarChart3,
+  Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
@@ -262,41 +263,70 @@ export default function DashboardPage() {
 
     try {
       // 1. Sincronizar en Supabase si está activo
-      if (isSupabaseEnabled && supabase && authUser) {
+      if (isSupabaseEnabled && supabase) {
         try {
-          const dbCard = normalizeCardForDatabase(cleanedCard, authUser.id, authUser.email);
-          await supabase.from('cards').upsert({
-            id: dbCard.id,
-            user_id: dbCard.user_id,
-            slug: dbCard.slug,
-            full_name: dbCard.full_name,
-            job_title: dbCard.job_title,
-            company_name: dbCard.company_name,
-            bio: dbCard.bio,
-            profile_photo_url: dbCard.profile_photo_url,
-            cover_photo_url: dbCard.cover_photo_url,
-            logo_url: dbCard.logo_url,
-            layout_type: dbCard.layout_type,
-            avatar_position: dbCard.avatar_position,
-            button_style: dbCard.button_style,
-            border_radius: dbCard.border_radius,
-            primary_color: dbCard.primary_color,
-            secondary_color: dbCard.secondary_color,
-            accent_color: dbCard.accent_color,
-            background_color: dbCard.background_color,
-            font_family: dbCard.font_family,
-            font_weight: dbCard.font_weight,
-            include_photo: dbCard.include_photo,
-            custom_vcf_notes: dbCard.custom_vcf_notes,
-            is_active: dbCard.is_active,
-            updated_at: dbCard.updated_at,
-          });
+          let activeUser = authUser;
+          if (!activeUser) {
+            const { data: { session } } = await supabase.auth.getSession();
+            activeUser = session?.user || null;
+            if (activeUser) setAuthUser(activeUser);
+          }
+
+          let userEmail = activeUser?.email || (cleanedCard as any).user_email || (cleanedCard as any).email || '';
+          let targetUserId = activeUser?.id;
+
+          // Si tenemos email pero no targetUserId o para evitar conflicto de email con otro UUID en public.users
+          if (userEmail) {
+            const { data: existingUser } = await supabase
+              .from('users')
+              .select('id')
+              .ilike('email', userEmail.trim())
+              .maybeSingle();
+            if (existingUser?.id) {
+              targetUserId = existingUser.id;
+            }
+          }
+
+          if (!targetUserId) {
+            targetUserId = isValidUuid(cleanedCard.user_id) ? cleanedCard.user_id : generateUuid();
+          }
+
+          const isSuper = isSuperAdminEmail(userEmail);
+
+          // Asegurar que el usuario existe en public.users
+          await supabase.from('users').upsert({
+            id: targetUserId,
+            email: userEmail || `${cleanedCard.slug}@proconnect.app`,
+            full_name: cleanedCard.full_name || 'Usuario ProConnect',
+            role: isSuper ? 'superadmin' : 'client',
+          }, { onConflict: 'id' });
+
+          // Normalizar tarjeta con el user_id correcto
+          const dbCard = normalizeCardForDatabase({ ...cleanedCard, user_id: targetUserId }, targetUserId, userEmail);
+
+          // Si ya existe una tarjeta con el mismo slug, reutilizar su id para evitar error de slug duplicado
+          const { data: existingCard } = await supabase
+            .from('cards')
+            .select('id')
+            .ilike('slug', dbCard.slug)
+            .maybeSingle();
+          if (existingCard?.id) {
+            dbCard.id = existingCard.id;
+          }
+
+          const cardPayload = getSupabaseCardPayload(dbCard);
+          let { error: cardUpsertErr } = await supabase.from('cards').upsert(cardPayload);
+
+          if (cardUpsertErr) {
+            console.warn('Upsert directo de cards tuvo advertencia, invocando RPC save_public_card:', cardUpsertErr.message);
+            await supabase.rpc('save_public_card', { p_card: dbCard });
+          }
 
           // Sincronizar card_links: borrar anteriores y reinsertar los vigentes limpios
           await supabase.from('card_links').delete().eq('card_id', dbCard.id);
-
           if (Array.isArray(dbCard.links) && dbCard.links.length > 0) {
-            await supabase.from('card_links').insert(dbCard.links);
+            const sanitizedLinks = dbCard.links.map((l) => ({ ...l, card_id: dbCard.id }));
+            await supabase.from('card_links').insert(sanitizedLinks);
           }
         } catch (sbErr) {
           console.warn('Error guardando en Supabase:', sbErr);
@@ -389,7 +419,7 @@ export default function DashboardPage() {
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       <Navbar />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-28 lg:pb-8">
         {/* Cabecera del Dashboard */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-slate-800">
           <div>
@@ -397,7 +427,8 @@ export default function DashboardPage() {
               <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
                 Editor de Tarjeta Digital
               </h1>
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-semibold border border-emerald-300 dark:border-emerald-800">
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-semibold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 Sincronización en Vivo
               </span>
               {currentCard.slug === 'luigi-colonico' && (
@@ -477,16 +508,6 @@ export default function DashboardPage() {
               </select>
             )}
 
-            {/* Ver en smartphone en móviles */}
-            <button
-              type="button"
-              onClick={() => setShowMobilePreview(!showMobilePreview)}
-              className="lg:hidden px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold flex items-center gap-1.5"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-sky-500" />
-              <span>{showMobilePreview ? 'Ocultar' : 'Ver Móvil'}</span>
-            </button>
-
             {/* Enlace al perfil público */}
             <a
               href={`/c/${currentCard.slug}`}
@@ -515,13 +536,19 @@ export default function DashboardPage() {
               </button>
             )}
 
-            {/* Botón Guardar Cambios */}
+            {/* Botón Guardar Cambios (Desktop) */}
             <button
               type="button"
               onClick={handleManualSave}
-              className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-md shadow-sky-600/20 flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95"
+              disabled={isSavingServer}
+              className="hidden sm:flex px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-md shadow-sky-600/20 items-center gap-1.5 transition-all hover:scale-105 active:scale-95 disabled:opacity-75"
             >
-              {isSaved ? (
+              {isSavingServer ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                  <span>Guardando...</span>
+                </>
+              ) : isSaved ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-white" />
                   <span>¡Guardado!</span>
@@ -545,6 +572,35 @@ export default function DashboardPage() {
               <span>Cerrar Sesión</span>
             </button>
           </div>
+        </div>
+
+        {/* Selector de Modo Móvil (Segmented Bar) - Solo en Celulares y Tablets */}
+        <div className="lg:hidden mt-4 grid grid-cols-2 p-1.5 rounded-2xl bg-slate-200/80 dark:bg-slate-800/80 backdrop-blur-sm border border-slate-300/80 dark:border-slate-700/80 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setShowMobilePreview(false)}
+            className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+              !showMobilePreview
+                ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-md ring-1 ring-black/5 dark:ring-white/10'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>✏️ Editar Datos</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMobilePreview(true)}
+            className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+              showMobilePreview
+                ? 'bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow-md shadow-sky-600/30'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>📱 Ver Teléfono</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          </button>
         </div>
 
         {/* Banner de Advertencia si está por vencer o vencida */}
@@ -590,7 +646,7 @@ export default function DashboardPage() {
         })()}
 
         {/* Banner Enlace NFC Directo y Prominente */}
-        <div className="mt-4 p-5 rounded-3xl bg-gradient-to-r from-sky-500/10 via-indigo-500/10 to-purple-500/10 border border-sky-200 dark:border-sky-900/50 backdrop-blur-sm shadow-sm">
+        <div className="mt-4 p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-sky-500/10 via-indigo-500/10 to-purple-500/10 border border-sky-200 dark:border-sky-900/50 backdrop-blur-sm shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-sky-500/20 shrink-0">
@@ -699,13 +755,13 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mt-6 items-start">
           {/* Columna Izquierda: Pestañas y Formularios de Edición (Col 7/12) */}
           <div className={`lg:col-span-7 ${showMobilePreview ? 'hidden lg:block' : 'block'}`}>
-            {/* Navegación por Pestañas (Totalmente accesible en PC con mouse y táctil) */}
-            <div className="flex flex-wrap gap-2 pb-3 mb-6 border-b border-slate-200 dark:border-slate-800">
+            {/* Navegación por Pestañas (Scroll horizontal fluido en móviles, sin partirse en 3 líneas) */}
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-3 mb-6 border-b border-slate-200 dark:border-slate-800 -mx-1 px-1">
               <button
                 onClick={() => setActiveTab('identity')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
+                className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
                   activeTab === 'identity'
-                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20 ring-2 ring-sky-400/30'
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
@@ -715,9 +771,9 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setActiveTab('design')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
+                className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
                   activeTab === 'design'
-                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20 ring-2 ring-sky-400/30'
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
@@ -727,9 +783,9 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setActiveTab('links')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
+                className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
                   activeTab === 'links'
-                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20 ring-2 ring-sky-400/30'
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
@@ -739,9 +795,9 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setActiveTab('multimedia')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
+                className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
                   activeTab === 'multimedia'
-                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20 ring-2 ring-sky-400/30'
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
@@ -751,9 +807,9 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setActiveTab('vcard')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
+                className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
                   activeTab === 'vcard'
-                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20 ring-2 ring-sky-400/30'
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
@@ -763,9 +819,9 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setActiveTab('analytics')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
+                className={`shrink-0 min-h-[40px] px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all ${
                   activeTab === 'analytics'
-                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20 ring-2 ring-sky-400/30'
                     : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
                 }`}
               >
@@ -775,7 +831,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Contenido Dinámico de la Pestaña Activa */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
               {activeTab === 'identity' && (
                 <IdentityEditor card={currentCard} onChange={handleCardUpdate} />
               )}
@@ -805,20 +861,80 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Columna Derecha: Simulador de Smartphone en Vivo (Col 5/12) Fijado en PC */}
+          {/* Columna Derecha: Simulador de Smartphone en Vivo */}
           <div
-            className={`lg:col-span-5 sticky top-24 self-start flex justify-center ${
-              showMobilePreview ? 'block' : 'hidden lg:flex'
+            className={`lg:col-span-5 sticky top-24 self-start flex flex-col items-center ${
+              showMobilePreview ? 'flex w-full' : 'hidden lg:flex'
             }`}
           >
             <LivePreviewPhone card={currentCard} />
+
+            {/* En móvil: botón prominente para volver al editor de datos */}
+            <div className="lg:hidden mt-4 w-full max-w-[340px] px-2">
+              <button
+                type="button"
+                onClick={() => setShowMobilePreview(false)}
+                className="w-full py-3.5 px-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-xs flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all"
+              >
+                <User className="w-4 h-4 text-sky-400 dark:text-sky-600" />
+                <span>← Volver al Editor de Datos</span>
+              </button>
+            </div>
           </div>
         </div>
       </main>
 
+      {/* Barra Flotante Inferior Móvil Fija (Garantiza que NUNCA se pierda el botón de guardar ni el simulador) */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 p-2.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl safe-bottom">
+        <div className="flex items-center justify-between gap-2 max-w-lg mx-auto">
+          <button
+            type="button"
+            onClick={() => setShowMobilePreview(!showMobilePreview)}
+            className="flex-1 py-3 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+          >
+            {showMobilePreview ? (
+              <>
+                <User className="w-4 h-4 text-sky-500" />
+                <span>✏️ Editor</span>
+              </>
+            ) : (
+              <>
+                <Smartphone className="w-4 h-4 text-sky-500" />
+                <span>📱 Ver Tarjeta</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleManualSave}
+            disabled={isSavingServer}
+            className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white text-xs font-black shadow-lg shadow-sky-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-75"
+          >
+            {isSavingServer ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                <span>Guardando...</span>
+              </>
+            ) : isSaved ? (
+              <>
+                <Check className="w-4 h-4 text-white" />
+                <span>¡Guardado!</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 text-white" />
+                <span>Guardar Cambios</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
       {/* Alerta flotante Toast */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl shadow-2xl border border-slate-800 dark:border-slate-200 text-xs font-bold animate-in fade-in slide-in-from-bottom-3 duration-200">
+        <div className="fixed bottom-20 lg:bottom-6 right-4 sm:right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl shadow-2xl border border-slate-800 dark:border-slate-200 text-xs font-bold animate-in fade-in slide-in-from-bottom-3 duration-200">
           <Check className="w-4 h-4 text-emerald-400 dark:text-emerald-600 shrink-0" />
           <span>{toastMessage}</span>
         </div>

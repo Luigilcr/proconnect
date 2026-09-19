@@ -23,7 +23,7 @@ import { saveCardDraft, loadCardDraft, clearCardDraft } from '@/lib/draft-store'
 import { AuthModal } from '@/components/auth/AuthModal';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { compressImage } from '@/lib/image-compressor';
-import { normalizeCardForDatabase, isSuperAdminEmail, getSupabaseCardPayload } from '@/lib/db-normalize';
+import { normalizeCardForDatabase, isSuperAdminEmail, getSupabaseCardPayload, generateUuid, isValidUuid } from '@/lib/db-normalize';
 import { ImageCropperModal } from '@/components/common/ImageCropperModal';
 import { MultimediaManager } from '@/components/dashboard/MultimediaManager';
 import {
@@ -103,6 +103,7 @@ export default function CrearTarjetaPage() {
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [enableCrm, setEnableCrm] = useState<boolean>(true);
   const [mobileStep2Tab, setMobileStep2Tab] = useState<'simulator' | 'catalog'>('simulator');
+  const [mobileTab, setMobileTab] = useState<'editor' | 'preview'>('editor');
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [guestMode, setGuestMode] = useState<boolean>(false);
@@ -407,6 +408,7 @@ export default function CrearTarjetaPage() {
   const goToStep2 = (e: React.MouseEvent) => {
     e.preventDefault();
     setStep(2);
+    setMobileTab('editor');
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -669,9 +671,31 @@ export default function CrearTarjetaPage() {
 
   const publishCardWithUser = async (user: { id: string; email?: string }) => {
     setIsPublishing(true);
+
+    let targetUserId = user.id;
+    const userEmail = (user.email || email || '').toLowerCase().trim();
+
+    // 1. Si Supabase está disponible, verificar si el usuario ya existe por email para reutilizar su id
+    if (isSupabaseEnabled && supabase && userEmail) {
+      try {
+        const { data: existingUser } = await supabase
+          .from('users')
+          .select('id')
+          .ilike('email', userEmail)
+          .maybeSingle();
+        if (existingUser?.id) {
+          targetUserId = existingUser.id;
+        }
+      } catch (e) {}
+    }
+
+    if (!targetUserId || !isValidUuid(targetUserId)) {
+      targetUserId = generateUuid();
+    }
+
     const finalizedCard: FullCard = {
       ...previewCard,
-      user_id: user.id,
+      user_id: targetUserId,
       background_texture: activeTemplate.background_texture || previewCard.background_texture,
       avatar_effect: activeTemplate.avatar_effect || previewCard.avatar_effect,
       card_badge: activeTemplate.card_badge || previewCard.card_badge,
@@ -680,9 +704,24 @@ export default function CrearTarjetaPage() {
     };
 
     // Normalizar datos para PostgreSQL (garantiza enums válidos como 'filled', UUIDs e integridad)
-    const dbCard = normalizeCardForDatabase(finalizedCard, user.id, user.email);
+    const dbCard = normalizeCardForDatabase(finalizedCard, targetUserId, userEmail);
 
-    // 1. Guardar en store local y cache por slug de alta prioridad
+    // 2. Si ya existe una tarjeta con el mismo slug en Supabase, reutilizar su id para evitar violar restricción unique
+    if (isSupabaseEnabled && supabase) {
+      try {
+        const { data: existingCard } = await supabase
+          .from('cards')
+          .select('id')
+          .ilike('slug', dbCard.slug)
+          .maybeSingle();
+        if (existingCard?.id) {
+          dbCard.id = existingCard.id;
+          finalizedCard.id = existingCard.id;
+        }
+      } catch (e) {}
+    }
+
+    // 3. Guardar en store local y cache por slug de alta prioridad
     saveCard(finalizedCard);
     if (typeof window !== 'undefined') {
       try {
@@ -693,16 +732,16 @@ export default function CrearTarjetaPage() {
       } catch {}
     }
 
-    // 2. Sincronizar en Supabase si está disponible
+    // 4. Sincronizar en Supabase si está disponible
     if (isSupabaseEnabled && supabase) {
       try {
-        const isSuper = isSuperAdminEmail(user.email);
+        const isSuper = isSuperAdminEmail(userEmail);
         await supabase.from('users').upsert({
-          id: dbCard.user_id,
-          email: user.email || '',
-          full_name: dbCard.full_name,
+          id: targetUserId,
+          email: userEmail || `${dbCard.slug}@proconnect.app`,
+          full_name: dbCard.full_name || 'Usuario ProConnect',
           role: isSuper ? 'superadmin' : 'client',
-        });
+        }, { onConflict: 'id' });
 
         // Upsert directo con columnas normalizadas de public.cards
         let cardPayload: any = getSupabaseCardPayload(dbCard);
@@ -723,14 +762,15 @@ export default function CrearTarjetaPage() {
         // Sincronizar card_links
         await supabase.from('card_links').delete().eq('card_id', dbCard.id);
         if (Array.isArray(dbCard.links) && dbCard.links.length > 0) {
-          await supabase.from('card_links').insert(dbCard.links);
+          const sanitizedLinks = dbCard.links.map((l) => ({ ...l, card_id: dbCard.id }));
+          await supabase.from('card_links').insert(sanitizedLinks);
         }
       } catch (err) {
         console.warn('Error sincronizando tarjeta en Supabase:', err);
       }
     }
 
-    // 3. Sincronizar en API local y caché de servidor
+    // 5. Sincronizar en API local y caché de servidor
     try {
       await fetch('/api/cards', {
         method: 'POST',
@@ -741,7 +781,7 @@ export default function CrearTarjetaPage() {
       console.warn('Error al sincronizar tarjeta con el servidor:', e);
     }
 
-    // 4. Limpiar borrador temporal ya que la tarjeta fue publicada exitosamente
+    // 6. Limpiar borrador temporal ya que la tarjeta fue publicada exitosamente
     clearCardDraft();
     setDraftRestored(false);
     setIsPublishing(false);
@@ -774,16 +814,25 @@ export default function CrearTarjetaPage() {
       }
     }
 
+    // Si el usuario ya colocó su correo electrónico en el formulario
+    if (email && email.trim().includes('@')) {
+      await publishCardWithUser({
+        id: generateUuid(),
+        email: email.trim(),
+      });
+      return;
+    }
+
     // Si está en modo invitado
     if (guestMode) {
       await publishCardWithUser({
-        id: `guest_${Date.now()}`,
+        id: generateUuid(),
         email: email || 'invitado@proconnect.app',
       });
       return;
     }
 
-    // Si no está autenticado, interceptar con el modal Product-Led de Registro/Login
+    // Si no está autenticado ni tiene email, mostrar modal de registro
     setShowAuthModal(true);
   };
 
@@ -1099,11 +1148,42 @@ export default function CrearTarjetaPage() {
             </div>
           </div>
 
+          {/* Selector Móvil de Vista (Editor vs Ver Tarjeta) - Solo Móvil en Pasos 1 y 2 */}
+          {step !== 3 && (
+            <div className="lg:hidden mb-6 grid grid-cols-2 p-1.5 rounded-2xl bg-slate-200/80 backdrop-blur-sm border border-slate-300 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setMobileTab('editor')}
+                className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                  mobileTab === 'editor'
+                    ? 'bg-white text-brand-navy shadow-md ring-1 ring-black/5'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>{step === 1 ? '✏️ Llenar Datos' : '🎨 Elegir Plantilla'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileTab('preview')}
+                className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                  mobileTab === 'preview'
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>📱 Ver en Teléfono</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              </button>
+            </div>
+          )}
+
           {/* Contenedor Dividido: Formulario / Opciones + Simulador Smartphone */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             
             {/* Columna Izquierda: Pasos (7 Cols) */}
-            <div className="lg:col-span-7 bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+            <div className={`lg:col-span-7 bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6 ${step !== 3 && mobileTab === 'preview' ? 'hidden lg:block' : 'block'}`}>
               
               {/* Banner de Estado de Autoguardado y Borrador Recuperado */}
               {step !== 3 && (
@@ -2091,7 +2171,7 @@ export default function CrearTarjetaPage() {
             </div>
 
             {/* Columna Derecha: Teléfono Inteligente en Vivo (5 Cols) */}
-            <div className={`lg:col-span-5 flex flex-col items-center sticky top-24 self-start ${step === 2 ? 'hidden lg:flex' : 'flex'}`}>
+            <div className={`lg:col-span-5 flex flex-col items-center sticky top-24 self-start ${step !== 3 && mobileTab === 'editor' ? 'hidden lg:flex' : 'flex'}`}>
               <div className="flex items-center justify-between w-full max-w-[340px] sm:max-w-[360px] mb-2 px-2">
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -2123,9 +2203,21 @@ export default function CrearTarjetaPage() {
                 Mira cómo cambia en vivo al cambiar tus datos o plantilla.
               </p>
 
-              {/* Botón de Acción Principal Directo bajo el Simulador */}
+              {/* En móvil: Botón prominente para volver al editor de datos o plantillas */}
+              <div className="lg:hidden mt-4 w-full max-w-[340px] sm:max-w-[360px] px-2">
+                <button
+                  type="button"
+                  onClick={() => setMobileTab('editor')}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-slate-900 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all"
+                >
+                  <User className="w-4 h-4 text-emerald-400" />
+                  <span>← Volver a {step === 1 ? 'Editar Datos' : 'Elegir Plantillas'}</span>
+                </button>
+              </div>
+
+              {/* Botón de Acción Principal Directo bajo el Simulador (Desktop) */}
               {step !== 3 && (
-                <div className="w-full max-w-[340px] sm:max-w-[360px] mt-4 space-y-2">
+                <div className="hidden lg:block w-full max-w-[340px] sm:max-w-[360px] mt-4 space-y-2">
                   <button
                     type="button"
                     onClick={step === 1 ? goToStep2 : handleFinishAndSave}
@@ -2148,20 +2240,44 @@ export default function CrearTarjetaPage() {
 
         {/* Barra de Acción Flotante Fija Inferior (Garantiza que NUNCA se pierda el botón) */}
         {step !== 3 && (
-          <div className="fixed bottom-0 left-0 right-0 z-40 p-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl">
-            <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-3">
+          <div className="fixed bottom-0 left-0 right-0 z-40 p-2.5 sm:p-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl safe-bottom">
+            <div className="max-w-7xl mx-auto px-2 sm:px-4 flex items-center justify-between gap-2 sm:gap-3">
               <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 hidden sm:inline">
-                  {step === 1 ? 'Paso 1: Contacto e Identidad' : `Plantilla Activa: ${activeTemplate.name}`}
-                </span>
+                {/* Botón rápido para alternar móvil en móviles */}
+                <button
+                  type="button"
+                  onClick={() => setMobileTab(mobileTab === 'editor' ? 'preview' : 'editor')}
+                  className="lg:hidden px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                >
+                  {mobileTab === 'editor' ? (
+                    <>
+                      <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>📱 Ver Tarjeta</span>
+                    </>
+                  ) : (
+                    <>
+                      <User className="w-3.5 h-3.5 text-sky-600" />
+                      <span>✏️ Editar</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="hidden sm:flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    {step === 1 ? 'Paso 1: Contacto e Identidad' : `Plantilla Activa: ${activeTemplate.name}`}
+                  </span>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                 {step === 2 && (
                   <button
                     type="button"
-                    onClick={() => setStep(1)}
+                    onClick={() => {
+                      setStep(1);
+                      setMobileTab('editor');
+                    }}
                     className="px-3 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors"
                   >
                     ← Volver
@@ -2171,10 +2287,19 @@ export default function CrearTarjetaPage() {
                   type="button"
                   onClick={step === 1 ? goToStep2 : handleFinishAndSave}
                   disabled={isPublishing}
-                  className="w-full sm:w-auto px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-95"
+                  className="flex-1 sm:flex-initial px-5 sm:px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-75"
                 >
-                  <span>{step === 1 ? 'Continuar a Elegir Plantilla →' : '🚀 Guardar y Publicar Tarjeta'}</span>
-                  <Check className="w-4 h-4" />
+                  {isPublishing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Publicando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{step === 1 ? 'Continuar a Plantillas →' : '🚀 Guardar y Publicar'}</span>
+                      <Check className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
               </div>
             </div>
