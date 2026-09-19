@@ -36,17 +36,17 @@ export default function PricingPage() {
   const plans = [
     {
       id: 'individual',
-      name: 'Plan Personal Freemium',
-      badge: '100% Gratis de por Vida',
+      name: 'Plan Personal',
+      badge: 'Totalmente Gratis',
       badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
       priceMonthly: 0,
       priceAnnual: 0,
-      description: 'Tu primera tarjeta digital interactiva 100% gratuita y sin fecha de caducidad. Comparte tu contacto al instante.',
+      description: 'Tu tarjeta digital interactiva personal es totalmente gratuita. Comparte tu perfil profesional al instante sin costos ocultos.',
       popular: false,
       ctaText: 'Crear mi Tarjeta Gratis',
       ctaHref: '/crear',
       features: [
-        '1 Tarjeta Digital Interactiva (Vitalicia)',
+        '1 Tarjeta Digital Interactiva (Totalmente Gratis)',
         'Código QR Dinámico descargable en PNG / SVG',
         'Compatibilidad 100% con chips NFC',
         'Captura de contactos 2-Way (Intercambio)',
@@ -226,7 +226,7 @@ export default function PricingPage() {
                               Gratis
                             </span>
                             <span className={`text-sm font-semibold ${plan.popular ? 'text-slate-400' : 'text-slate-500'}`}>
-                              de por vida
+                              • Totalmente Gratis
                             </span>
                           </>
                         ) : (

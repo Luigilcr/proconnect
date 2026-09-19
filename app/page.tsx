@@ -95,10 +95,10 @@ export default function HomePage() {
               {/* Columna Izquierda: Mensaje y Oferta Libre de Riesgo */}
               <div className="lg:col-span-7 space-y-6 text-left">
                 
-                {/* Badge Amigable de 1 Mes Gratis */}
+                {/* Badge Amigable Totalmente Gratis */}
                 <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold shadow-sm">
                   <Gift className="w-3.5 h-3.5 text-emerald-600 animate-bounce" />
-                  <span>Tu Primera Tarjeta Digital 100% Gratis por 1 Mes</span>
+                  <span>Tu Tarjeta Digital Totalmente Gratis</span>
                 </div>
 
                 <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight text-brand-navy leading-[1.12]">
@@ -118,7 +118,7 @@ export default function HomePage() {
                     'Cero apps requeridas (abre en iPhone y Android al instante)',
                     'El cliente guarda tu contacto y tú recibes sus datos (2-Way)',
                     'Actualizable en vivo: cambia tus datos sin reimprimir nada',
-                    'Tu primera tarjeta digital 100% gratis de por vida',
+                    'Tu tarjeta digital personal es totalmente gratis',
                   ].map((item, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                       <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0">
@@ -136,7 +136,7 @@ export default function HomePage() {
                     className="px-8 py-4 rounded-2xl bg-brand-navy hover:bg-brand-blue text-white font-black text-sm shadow-xl shadow-brand-navy/20 flex items-center justify-center gap-2.5 transition-all hover:scale-[1.02] active:scale-95"
                   >
                     <Sparkles className="w-4 h-4 text-brand-cyan" />
-                    <span>Crear Mi Tarjeta Gratis (30 Días)</span>
+                    <span>Crear Mi Tarjeta Totalmente Gratis</span>
                   </Link>
 
                   <Link
@@ -512,7 +512,7 @@ export default function HomePage() {
             
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-brand-cyan text-xs font-bold">
               <Gift className="w-4 h-4" />
-              <span>100% Gratuito para Siempre • Sin Caducidad</span>
+              <span>Totalmente Gratis • Sin Costo</span>
             </div>
 
             <h2 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight">
@@ -528,7 +528,7 @@ export default function HomePage() {
                 href="/crear"
                 className="w-full sm:w-auto px-9 py-4 rounded-2xl bg-brand-cyan text-brand-navy font-black text-sm hover:bg-sky-300 transition-all shadow-xl shadow-brand-cyan/20 hover:scale-105"
               >
-                Crear Mi Primera Tarjeta Gratis
+                Crear Mi Tarjeta Totalmente Gratis
               </Link>
               
               <Link
@@ -540,7 +540,7 @@ export default function HomePage() {
             </div>
 
             <div className="pt-4 flex flex-wrap items-center justify-center gap-6 text-xs text-slate-400">
-              <span>✓ 100% Gratis de por vida</span>
+              <span>✓ Totalmente Gratis</span>
               <span>✓ QR dinámico descargable</span>
               <span>✓ 100% actualizable</span>
             </div>

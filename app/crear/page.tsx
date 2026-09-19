@@ -849,7 +849,7 @@ export default function CrearTarjetaPage() {
             {/* Badge */}
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black shadow-sm mx-auto">
               <Gift className="w-3.5 h-3.5 text-emerald-600" />
-              <span>100% Gratis de por Vida • Sin Caducidad</span>
+              <span>Totalmente Gratis • Sin Costo</span>
             </div>
 
             <div className="space-y-2">
@@ -857,7 +857,7 @@ export default function CrearTarjetaPage() {
                 Crea tu Tarjeta Inteligente
               </h1>
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Inicia sesión o regístrate para comenzar a diseñar tu tarjeta digital. Tu primera tarjeta personal es 100% gratuita y sin fecha de caducidad.
+                Inicia sesión o regístrate para comenzar a diseñar tu tarjeta digital. Tu primera tarjeta personal es totalmente gratis y sin fecha de caducidad.
               </p>
             </div>
 

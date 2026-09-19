@@ -360,7 +360,7 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
                       {expInfo.status === 'lifetime' ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
                           <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Vitalicia • Sin Caducidad</span>
+                          <span>Totalmente Gratis</span>
                         </span>
                       ) : (
                         <>

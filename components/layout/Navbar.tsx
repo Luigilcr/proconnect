@@ -87,7 +87,7 @@ export const Navbar: React.FC = () => {
             className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-black transition-all shadow-sm"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>1 Mes Gratis</span>
+            <span>Totalmente Gratis</span>
           </Link>
 
           {user ? (
