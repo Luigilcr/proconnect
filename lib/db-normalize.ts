@@ -149,7 +149,7 @@ export function normalizeCardForDatabase(
     font_weight: rawCard.font_weight || 'medium',
     include_photo: rawCard.include_photo ?? true,
     custom_vcf_notes: rawCard.custom_vcf_notes || '',
-    expires_at: rawCard.expires_at || new Date(Date.now() + 30 * 86400000).toISOString(),
+    expires_at: rawCard.expires_at || null,
     links: sanitizedLinks,
     multimedia: Array.isArray(rawCard.multimedia) ? rawCard.multimedia : [],
     created_at: rawCard.created_at || new Date().toISOString(),
@@ -159,8 +159,8 @@ export function normalizeCardForDatabase(
 }
 
 /**
- * Retorna únicamente los campos existentes en la tabla public.cards de Supabase,
- * evitando errores de 'column does not exist' como expires_at.
+ * Retorna los campos para la tabla public.cards de Supabase.
+ * Para cuentas individuales, expires_at es null (vitalicio freemium).
  */
 export function getSupabaseCardPayload(card: FullCard) {
   return {
@@ -189,6 +189,7 @@ export function getSupabaseCardPayload(card: FullCard) {
     include_photo: card.include_photo ?? true,
     custom_vcf_notes: card.custom_vcf_notes || null,
     enable_crm_capture: card.enable_crm_capture ?? true,
+    expires_at: card.expires_at ?? null,
     updated_at: new Date().toISOString(),
   };
 }

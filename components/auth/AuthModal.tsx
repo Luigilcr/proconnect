@@ -92,11 +92,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               onClose();
             }, 600);
           } else {
-            setSuccess('¡Cuenta registrada! Publicando tu tarjeta de inmediato...');
+            setSuccess('¡Cuenta registrada! Revisa tu correo para verificar tu cuenta y comenzar.');
             setTimeout(() => {
-              onSuccess({ ...(data.user || {}), id: data.user?.id || 'usr_' + Date.now(), email, email_pending: true });
+              onSuccess({ ...(data.user || {}), email, email_confirmed_at: null });
               onClose();
-            }, 800);
+            }, 1000);
           }
         }
       } else {

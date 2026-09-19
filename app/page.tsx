@@ -118,7 +118,7 @@ export default function HomePage() {
                     'Cero apps requeridas (abre en iPhone y Android al instante)',
                     'El cliente guarda tu contacto y tú recibes sus datos (2-Way)',
                     'Actualizable en vivo: cambia tus datos sin reimprimir nada',
-                    '1 mes completo de prueba gratuita sin tarjeta de crédito',
+                    'Tu primera tarjeta digital 100% gratis de por vida',
                   ].map((item, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                       <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0">
@@ -512,7 +512,7 @@ export default function HomePage() {
             
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-brand-cyan text-xs font-bold">
               <Gift className="w-4 h-4" />
-              <span>Prueba 100% Gratuita • 1 Mes Completo</span>
+              <span>100% Gratuito para Siempre • Sin Caducidad</span>
             </div>
 
             <h2 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight">
@@ -520,7 +520,7 @@ export default function HomePage() {
             </h2>
 
             <p className="text-sm sm:text-base text-slate-300 max-w-xl mx-auto leading-relaxed">
-              Crea tu primera tarjeta de presentación digital en minutos. Sin ingresar tarjeta de crédito, sin compromisos. Si te gusta, continúa; si no, disfrútala gratis.
+              Crea tu primera tarjeta de presentación digital en minutos. Sin ingresar tarjeta de crédito, sin caducidad. Diseñada para profesionales que buscan causar un impacto inolvidable.
             </p>
 
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -540,7 +540,7 @@ export default function HomePage() {
             </div>
 
             <div className="pt-4 flex flex-wrap items-center justify-center gap-6 text-xs text-slate-400">
-              <span>✓ Cero tarjeta de crédito</span>
+              <span>✓ 100% Gratis de por vida</span>
               <span>✓ QR dinámico descargable</span>
               <span>✓ 100% actualizable</span>
             </div>

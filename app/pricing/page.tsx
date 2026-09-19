@@ -36,28 +36,28 @@ export default function PricingPage() {
   const plans = [
     {
       id: 'individual',
-      name: 'Profesional Individual',
-      badge: 'Para Asesores & Consultores',
-      badgeColor: 'bg-slate-100 text-slate-700 border-slate-200',
-      priceMonthly: 12,
-      priceAnnual: 9, // $9/mo billed annually
-      description: 'Eleva tu presencia profesional con una tarjeta digital inteligente siempre actualizada y sin límites.',
+      name: 'Plan Personal Freemium',
+      badge: '100% Gratis de por Vida',
+      badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      priceMonthly: 0,
+      priceAnnual: 0,
+      description: 'Tu primera tarjeta digital interactiva 100% gratuita y sin fecha de caducidad. Comparte tu contacto al instante.',
       popular: false,
-      ctaText: 'Comenzar Prueba Gratis',
-      ctaHref: '/dashboard',
+      ctaText: 'Crear mi Tarjeta Gratis',
+      ctaHref: '/crear',
       features: [
-        '1 Tarjeta Digital Interactiva',
-        'Código QR Dinámico descargable en SVG',
+        '1 Tarjeta Digital Interactiva (Vitalicia)',
+        'Código QR Dinámico descargable en PNG / SVG',
         'Compatibilidad 100% con chips NFC',
         'Captura de contactos 2-Way (Intercambio)',
-        'Analíticas de visitas y clics básicos',
+        'Analíticas de visitas y clics en tiempo real',
         'Descarga directa de vCard al teléfono',
-        'Catálogo multimedia (PDF y fotos)',
+        'Enlaces ilimitados (WhatsApp, Redes, Web)',
       ],
       notIncluded: [
-        'Panel multi-usuario B2B',
-        'Control estricto de marca (Brand Lock)',
-        'CRM corporativo con embudo de ventas',
+        'Múltiples tarjetas para colaboradores',
+        'Panel administrativo de empresa',
+        'Control estricto de marca corporativa (Brand Lock)',
       ],
     },
     {
@@ -220,12 +220,25 @@ export default function PricingPage() {
 
                       {/* Precio */}
                       <div className="flex items-baseline gap-1.5 mb-6 pb-6 border-b border-slate-100 dark:border-slate-800">
-                        <span className="text-4xl sm:text-5xl font-black tracking-tight">
-                          ${currentPrice}
-                        </span>
-                        <span className={`text-sm font-semibold ${plan.popular ? 'text-slate-400' : 'text-slate-500'}`}>
-                          /mes {billingCycle === 'annual' && '(pago anual)'}
-                        </span>
+                        {currentPrice === 0 ? (
+                          <>
+                            <span className="text-4xl sm:text-5xl font-black tracking-tight text-emerald-600">
+                              Gratis
+                            </span>
+                            <span className={`text-sm font-semibold ${plan.popular ? 'text-slate-400' : 'text-slate-500'}`}>
+                              de por vida
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-4xl sm:text-5xl font-black tracking-tight">
+                              ${currentPrice}
+                            </span>
+                            <span className={`text-sm font-semibold ${plan.popular ? 'text-slate-400' : 'text-slate-500'}`}>
+                              /mes {billingCycle === 'annual' && '(pago anual)'}
+                            </span>
+                          </>
+                        )}
                       </div>
 
                       {/* Features List */}

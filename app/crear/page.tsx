@@ -57,6 +57,10 @@ import {
   Video,
   ChevronLeft,
   ChevronRight,
+  RotateCcw,
+  RefreshCw,
+  LogOut,
+  MailCheck,
 } from 'lucide-react';
 
 export default function CrearTarjetaPage() {
@@ -95,6 +99,11 @@ export default function CrearTarjetaPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [guestMode, setGuestMode] = useState<boolean>(false);
+  const [checkingConfirmed, setCheckingConfirmed] = useState(false);
+  const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendSent, setResendSent] = useState(false);
+  const [resetToast, setResetToast] = useState(false);
 
   // Estados de Persistencia Temporal (Auto-Save) y Product-Led Auth
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -431,9 +440,6 @@ export default function CrearTarjetaPage() {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
             setCurrentUser(session.user);
-            if (session.user.user_metadata?.full_name) {
-              setFullName((prev) => prev || session.user.user_metadata.full_name || '');
-            }
             if (session.user.email) {
               setEmail((prev) => prev || session.user.email || '');
             }
@@ -450,9 +456,6 @@ export default function CrearTarjetaPage() {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user) {
           setCurrentUser(session.user);
-          if (session.user.user_metadata?.full_name) {
-            setFullName((prev) => prev || session.user.user_metadata.full_name || '');
-          }
           if (session.user.email) {
             setEmail((prev) => prev || session.user.email || '');
           }
@@ -463,6 +466,82 @@ export default function CrearTarjetaPage() {
       return () => subscription.unsubscribe();
     }
   }, []);
+
+  const handleResetForm = () => {
+    clearCardDraft();
+    setFullName('');
+    setJobTitle('');
+    setCompanyName('');
+    setPhoneNumber('');
+    setEmail(currentUser?.email || '');
+    setWebsite('');
+    setInstagram('');
+    setLinkedin('');
+    setTiktok('');
+    setBio('');
+    setLogoUrl(null);
+    setDraftRestored(false);
+    setLastSavedTime(null);
+    setResetToast(true);
+    setTimeout(() => setResetToast(false), 3500);
+  };
+
+  const handleCheckEmailConfirmed = async () => {
+    if (!isSupabaseEnabled || !supabase) return;
+    setCheckingConfirmed(true);
+    setVerificationMessage(null);
+    try {
+      const { data: { session } } = await supabase.auth.refreshSession();
+      if (session?.user?.email_confirmed_at) {
+        setCurrentUser(session.user);
+        setVerificationMessage('¡Correo confirmado! Ingresando al creador...');
+        return;
+      }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email_confirmed_at) {
+        setCurrentUser(user);
+        setVerificationMessage('¡Correo confirmado! Ingresando al creador...');
+      } else {
+        setVerificationMessage('Tu correo aún no aparece confirmado. Revisa tu bandeja de entrada o carpeta de spam y haz clic en el enlace.');
+      }
+    } catch (e: any) {
+      setVerificationMessage('Error al verificar: ' + (e?.message || 'Intenta de nuevo'));
+    } finally {
+      setCheckingConfirmed(false);
+    }
+  };
+
+  const handleResendVerificationEmail = async () => {
+    if (!currentUser?.email || !isSupabaseEnabled || !supabase) return;
+    setResendLoading(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: currentUser.email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/crear`,
+        },
+      });
+      if (error) {
+        setVerificationMessage('Aviso: ' + error.message);
+      } else {
+        setResendSent(true);
+        setVerificationMessage('Hemos reenviado el enlace a tu correo. Revisa tu bandeja de entrada o spam.');
+        setTimeout(() => setResendSent(false), 5000);
+      }
+    } catch (err: any) {
+      setVerificationMessage('Error al reenviar: ' + (err?.message || 'Intenta de nuevo'));
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (isSupabaseEnabled && supabase) {
+      await supabase.auth.signOut();
+    }
+    setCurrentUser(null);
+  };
 
   const handleGoogleSignIn = async () => {
     if (!isSupabaseEnabled || !supabase) {
@@ -561,6 +640,8 @@ export default function CrearTarjetaPage() {
       background_texture: activeTemplate.background_texture || previewCard.background_texture,
       avatar_effect: activeTemplate.avatar_effect || previewCard.avatar_effect,
       card_badge: activeTemplate.card_badge || previewCard.card_badge,
+      expires_at: null, // Lifetime freemium
+      plan_duration: 'lifetime',
     };
 
     // Normalizar datos para PostgreSQL (garantiza enums válidos como 'filled', UUIDs e integridad)
@@ -589,8 +670,15 @@ export default function CrearTarjetaPage() {
         });
 
         // Upsert directo con columnas normalizadas de public.cards
-        const cardPayload = getSupabaseCardPayload(dbCard);
-        const { error: cardUpsertErr } = await supabase.from('cards').upsert(cardPayload);
+        let cardPayload: any = getSupabaseCardPayload(dbCard);
+        let { error: cardUpsertErr } = await supabase.from('cards').upsert(cardPayload);
+
+        // Si la columna expires_at aún no existe en Supabase (código 42703), reintentar sin ella
+        if (cardUpsertErr && (cardUpsertErr as any).code === '42703') {
+          const { expires_at, ...cleanPayload } = cardPayload;
+          const retry = await supabase.from('cards').upsert(cleanPayload);
+          cardUpsertErr = retry.error;
+        }
 
         if (cardUpsertErr) {
           console.warn('Upsert directo de cards tuvo advertencia, invocando RPC save_public_card:', cardUpsertErr.message);
@@ -725,17 +813,25 @@ export default function CrearTarjetaPage() {
     );
   }
 
-  if (!currentUser && isSupabaseEnabled && !guestMode) {
+  const isEmailConfirmed = Boolean(
+    currentUser?.email_confirmed_at ||
+    currentUser?.confirmed_at ||
+    currentUser?.app_metadata?.provider === 'google' ||
+    currentUser?.identities?.some((id: any) => id.provider === 'google')
+  );
+
+  // 1. Pantalla de Bloqueo: Exigir Registro / Inicio de Sesión
+  if (!currentUser && isSupabaseEnabled) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-brand-cyan/20 selection:text-brand-navy">
         <Navbar />
 
-        <main className="flex-1 py-12 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
+        <main className="flex-1 py-16 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
           <div className="max-w-md w-full bg-white rounded-3xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6 text-center">
             {/* Badge */}
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black shadow-sm mx-auto">
               <Gift className="w-3.5 h-3.5 text-emerald-600" />
-              <span>1 Mes de Prueba Gratis • Sin Tarjeta</span>
+              <span>100% Gratis de por Vida • Sin Caducidad</span>
             </div>
 
             <div className="space-y-2">
@@ -743,7 +839,7 @@ export default function CrearTarjetaPage() {
                 Crea tu Tarjeta Inteligente
               </h1>
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Inicia sesión o crea tu cuenta para diseñar tu tarjeta digital. Estará vinculada de inmediato a tu perfil y lista para compartir en WhatsApp.
+                Inicia sesión o regístrate para comenzar a diseñar tu tarjeta digital. Tu primera tarjeta personal es 100% gratuita y sin fecha de caducidad.
               </p>
             </div>
 
@@ -752,7 +848,7 @@ export default function CrearTarjetaPage() {
               <button
                 type="button"
                 onClick={handleGoogleSignIn}
-                className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm shadow-sm transition-all hover:shadow hover:border-slate-400 active:scale-[0.99]"
+                className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm shadow-sm transition-all hover:shadow hover:border-slate-400 active:scale-[0.99] cursor-pointer"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path
@@ -793,23 +889,11 @@ export default function CrearTarjetaPage() {
                 <button
                   type="button"
                   onClick={() => setShowAuthModal(true)}
-                  className="w-full py-2.5 px-4 rounded-xl bg-brand-navy hover:bg-brand-navy/90 text-white font-bold text-xs text-center shadow transition-all"
+                  className="w-full py-2.5 px-4 rounded-xl bg-brand-navy hover:bg-slate-800 text-white font-bold text-xs text-center shadow transition-all cursor-pointer"
                 >
                   Registrarme
                 </button>
               </div>
-            </div>
-
-            {/* Opción de continuar como invitado */}
-            <div className="pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setGuestMode(true)}
-                className="text-xs font-semibold text-slate-500 hover:text-brand-navy transition-colors inline-flex items-center gap-1 group"
-              >
-                <span>¿Solo deseas probar el diseñador? Continuar como invitado</span>
-                <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-              </button>
             </div>
           </div>
         </main>
@@ -822,8 +906,85 @@ export default function CrearTarjetaPage() {
             setShowAuthModal(false);
           }}
           title="Crea tu cuenta para comenzar"
-          subtitle="Accede a todas las plantillas, personalización y métricas en tiempo real."
+          subtitle="Tu primera tarjeta personal es 100% gratuita y sin fecha de caducidad."
         />
+        <Footer />
+      </div>
+    );
+  }
+
+  // 2. Pantalla de Bloqueo: Exigir Confirmación Obligatoria de Correo
+  if (currentUser && !isEmailConfirmed && isSupabaseEnabled) {
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-brand-cyan/20 selection:text-brand-navy">
+        <Navbar />
+
+        <main className="flex-1 py-16 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
+          <div className="max-w-md w-full bg-white rounded-3xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6 text-center">
+            <div className="w-16 h-16 rounded-3xl bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center justify-center mx-auto animate-pulse">
+              <Mail className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-black mx-auto">
+                <MailCheck className="w-3.5 h-3.5 text-amber-700" />
+                <span>Confirmación Obligatoria</span>
+              </div>
+              <h1 className="text-2xl font-black text-brand-navy tracking-tight">
+                Confirma tu Correo Electrónico
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Hemos enviado un enlace de activación a:
+              </p>
+              <p className="text-sm font-bold text-slate-900 bg-slate-100 py-2 px-3 rounded-xl break-all font-mono">
+                {currentUser.email}
+              </p>
+              <p className="text-xs text-slate-500 leading-relaxed pt-1">
+                Por seguridad y para proteger tu tarjeta digital inteligente y chip NFC, debes confirmar tu cuenta antes de poder diseñar y publicar.
+              </p>
+            </div>
+
+            {verificationMessage && (
+              <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-sky-800 text-xs font-semibold leading-relaxed">
+                {verificationMessage}
+              </div>
+            )}
+
+            <div className="space-y-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCheckEmailConfirmed}
+                disabled={checkingConfirmed}
+                className="w-full py-3.5 px-4 rounded-xl bg-brand-navy hover:bg-slate-800 active:scale-95 text-white font-black text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <RefreshCw className={`w-4 h-4 ${checkingConfirmed ? 'animate-spin' : ''}`} />
+                <span>{checkingConfirmed ? 'Verificando...' : 'Ya confirmé mi correo (Entrar al Creador)'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResendVerificationEmail}
+                disabled={resendLoading}
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Mail className="w-4 h-4 text-slate-500" />
+                <span>{resendSent ? '✓ Enlace Reenviado' : 'Reenviar Correo de Confirmación'}</span>
+              </button>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="text-xs font-semibold text-slate-400 hover:text-rose-600 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Cerrar sesión o usar otro correo</span>
+              </button>
+            </div>
+          </div>
+        </main>
+
         <Footer />
       </div>
     );
@@ -944,15 +1105,33 @@ export default function CrearTarjetaPage() {
               {/* PASO 1: DATOS PERSONALES */}
               {step === 1 && (
                 <div className="space-y-5 animate-in fade-in duration-200">
-                  <div className="border-b border-slate-100 pb-3">
-                    <h2 className="text-lg font-bold text-brand-navy flex items-center gap-2">
-                      <User className="w-4 h-4 text-brand-blue" />
-                      <span>Paso 1: Información de Contacto e Identidad</span>
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Estos datos se guardarán automáticamente en la libreta del cliente cuando descargue tu vCard.
-                    </p>
+                  <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-brand-navy flex items-center gap-2">
+                        <User className="w-4 h-4 text-brand-blue" />
+                        <span>Paso 1: Información de Contacto e Identidad</span>
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Estos datos se guardarán automáticamente en la libreta del cliente cuando descargue tu vCard.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetForm}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-rose-600 font-bold text-xs flex items-center gap-1.5 transition-colors self-start sm:self-center cursor-pointer shadow-sm active:scale-95"
+                      title="Vacía los campos y empieza una tarjeta desde cero"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Limpiar campos</span>
+                    </button>
                   </div>
+
+                  {resetToast && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                      <Check className="w-4 h-4 text-emerald-600" />
+                      <span>Formulario restablecido. Estás creando una tarjeta en blanco.</span>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
@@ -961,7 +1140,7 @@ export default function CrearTarjetaPage() {
                         type="text"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
-                        placeholder="Ej: Rossana Orta"
+                        placeholder="Ej: Carlos Mendoza"
                         className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-cyan"
                       />
                     </div>
@@ -972,7 +1151,7 @@ export default function CrearTarjetaPage() {
                         type="text"
                         value={jobTitle}
                         onChange={(e) => setJobTitle(e.target.value)}
-                        placeholder="Ej: Marketing | RRPP"
+                        placeholder="Ej: Director Comercial"
                         className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-cyan"
                       />
                     </div>
@@ -996,7 +1175,7 @@ export default function CrearTarjetaPage() {
                         type="text"
                         value={phoneNumber}
                         onChange={(e) => setPhoneNumber(e.target.value)}
-                        placeholder="+58 412 123 4567"
+                        placeholder="Ej: +58 412 123 4567"
                         className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-cyan font-mono"
                       />
                     </div>
@@ -1008,7 +1187,7 @@ export default function CrearTarjetaPage() {
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="nombre@empresa.com"
+                      placeholder="Ej: carlos@miempresa.com"
                       className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-cyan"
                     />
                   </div>
@@ -1022,7 +1201,7 @@ export default function CrearTarjetaPage() {
                       rows={3}
                       value={bio}
                       onChange={(e) => setBio(e.target.value)}
-                      placeholder="Ej: Somos tu aliado confiable para alcanzar tus objetivos..."
+                      placeholder="Ej: Ayudo a empresas a escalar sus ventas B2B con soluciones digitales..."
                       className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-cyan leading-relaxed"
                     />
                   </div>
