@@ -62,6 +62,7 @@ import { Footer } from '@/components/layout/Footer';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { isSuperAdminEmail } from '@/lib/db-normalize';
+import { useInactivityTimeout } from '@/lib/useInactivityTimeout';
 import { BatchPrintModal } from '@/components/org/BatchPrintModal';
 import {
   Building2,
@@ -117,6 +118,7 @@ import {
 export type B2BTab = 'overview' | 'team' | 'import' | 'brand' | 'crm' | 'directory' | 'print' | 'restaurant';
 
 export default function OrgDashboardPage() {
+  useInactivityTimeout(true);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string>('');
   const [cards, setCards] = useState<FullCard[]>([]);

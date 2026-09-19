@@ -202,11 +202,82 @@ export const DesignCustomizer: React.FC<DesignCustomizerProps> = ({
         <div className="flex items-center justify-between mb-3">
           <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
             <Sparkles className="w-4 h-4 text-amber-400" />
-            Galería de Plantillas Prémium ({PRESET_TEMPLATES.length} Estilos)
+            Plantillas Prémium ({PRESET_TEMPLATES.length} Estilos)
           </label>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        {/* Selector de Plantilla Móvil Compacto (Reemplaza la cuadrícula de 26 cajas en teléfonos) */}
+        {(() => {
+          const activeIndex = Math.max(
+            0,
+            PRESET_TEMPLATES.findIndex(
+              (t) =>
+                t.layout_type === card.layout_type &&
+                t.colors.primary.toLowerCase() === (card.primary_color || '').toLowerCase()
+            )
+          );
+          const currentPreset = PRESET_TEMPLATES[activeIndex] || PRESET_TEMPLATES[0];
+
+          const handlePrevPreset = () => {
+            const prevIdx = (activeIndex - 1 + PRESET_TEMPLATES.length) % PRESET_TEMPLATES.length;
+            applyPresetTemplate(PRESET_TEMPLATES[prevIdx]);
+          };
+
+          const handleNextPreset = () => {
+            const nextIdx = (activeIndex + 1) % PRESET_TEMPLATES.length;
+            applyPresetTemplate(PRESET_TEMPLATES[nextIdx]);
+          };
+
+          return (
+            <div className="sm:hidden p-4 rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200/80 dark:from-slate-800 dark:to-slate-900 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3 mb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span className="text-xs font-black text-slate-900 dark:text-white truncate">
+                    {currentPreset.name}
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0">
+                  {activeIndex + 1} de {PRESET_TEMPLATES.length}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 py-1">
+                <span style={{ backgroundColor: currentPreset.colors.primary }} className="w-5 h-3 rounded" />
+                <span style={{ backgroundColor: currentPreset.colors.secondary }} className="w-5 h-3 rounded" />
+                <span style={{ backgroundColor: currentPreset.colors.accent }} className="w-5 h-3 rounded" />
+                <span style={{ backgroundColor: currentPreset.colors.background }} className="w-5 h-3 rounded border border-slate-400" />
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 ml-2 font-medium truncate">
+                  {currentPreset.industry}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handlePrevPreset}
+                  className="py-2.5 px-3 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs border border-slate-300 dark:border-slate-600 flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                >
+                  <span>‹ Anterior</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextPreset}
+                  className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-sky-600/20 active:scale-95 transition-all"
+                >
+                  <span>Siguiente ›</span>
+                </button>
+              </div>
+
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 text-center font-medium">
+                Toca <strong>📱 Ver Tarjeta</strong> abajo para verla aplicada al instante.
+              </p>
+            </div>
+          );
+        })()}
+
+        {/* Cuadrícula de 26 Plantillas (Solo en Pantallas Desktop/Tablet sm+) */}
+        <div className="hidden sm:grid sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
           {PRESET_TEMPLATES.map((preset) => (
             <button
               key={preset.id}

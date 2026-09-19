@@ -38,9 +38,11 @@ import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { isSuperAdminEmail } from '@/lib/db-normalize';
+import { useInactivityTimeout } from '@/lib/useInactivityTimeout';
 import { ShieldCheck, RefreshCw, AlertCircle, Filter, CheckCircle2, Trash2, Database, Check } from 'lucide-react';
 
 export default function SuperadminPage() {
+  useInactivityTimeout(true);
   const [cards, setCards] = useState<FullCard[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);

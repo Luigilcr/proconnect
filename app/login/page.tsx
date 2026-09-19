@@ -30,6 +30,7 @@ function LoginForm() {
 
   // Verificar si ya hay sesión activa
   useEffect(() => {
+    if (searchParams.get('reason') === 'timeout') return;
     if (isSupabaseEnabled && supabase) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.user) {
@@ -41,12 +42,15 @@ function LoginForm() {
         }
       });
     }
-  }, [redirectTo]);
+  }, [redirectTo, searchParams]);
 
-  // Verificar parámetro verified en URL
+  // Verificar parámetros en URL (verificado o expiración por inactividad)
   useEffect(() => {
     if (searchParams.get('verified') === 'true') {
       setSuccess('¡Correo verificado con éxito! Ya puedes iniciar sesión.');
+      setMode('login');
+    } else if (searchParams.get('reason') === 'timeout') {
+      setError('⚠️ Tu sesión ha expirado tras 5 minutos de inactividad por tu seguridad. Por favor, ingresa nuevamente.');
       setMode('login');
     }
   }, [searchParams]);

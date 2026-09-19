@@ -6,10 +6,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FullCard, CardLink, CatalogMultimedia } from '@/lib/types';
+import { FullCard, CardLink, CatalogMultimedia, PresetTemplate } from '@/lib/types';
 import { getStoredCards, saveCard, renewCardSubscription, persistCards } from '@/lib/data/card-store';
-import { saveDashboardDraft, loadDashboardDraft, clearDashboardDraft } from '@/lib/draft-store';
+import { saveDashboardDraft, loadDashboardDraft, clearDashboardDraft, clearCardDraft } from '@/lib/draft-store';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+import { useInactivityTimeout } from '@/lib/useInactivityTimeout';
 import { normalizeCardForDatabase, isSuperAdminEmail, getSupabaseCardPayload, generateUuid, isValidUuid } from '@/lib/db-normalize';
 import { IdentityEditor } from '@/components/dashboard/IdentityEditor';
 import { DesignCustomizer } from '@/components/dashboard/DesignCustomizer';
@@ -92,6 +93,7 @@ export default function DashboardPage() {
 
       // 2. Cargar tarjetas remotas desde Supabase si está disponible
       let sbCards: FullCard[] = [];
+      let sbConnected = false;
       if (isSupabaseEnabled && supabase && loggedUser) {
         try {
           let query = supabase.from('cards').select('*');
@@ -99,73 +101,84 @@ export default function DashboardPage() {
             query = query.eq('user_id', loggedUser.id);
           }
           const { data: fetched, error } = await query;
-          if (!error && fetched && fetched.length > 0) {
-            const cardIds = fetched.map((c: any) => c.id);
-            let linksMap: Record<string, CardLink[]> = {};
-            if (cardIds.length > 0) {
-              const { data: linksData } = await supabase
-                .from('card_links')
-                .select('*')
-                .in('card_id', cardIds)
-                .order('position_order', { ascending: true });
-              if (linksData) {
-                linksData.forEach((l: any) => {
-                  if (!linksMap[l.card_id]) linksMap[l.card_id] = [];
-                  linksMap[l.card_id].push(l);
-                });
+          if (!error) {
+            sbConnected = true;
+            if (fetched && fetched.length > 0) {
+              const cardIds = fetched.map((c: any) => c.id);
+              let linksMap: Record<string, CardLink[]> = {};
+              if (cardIds.length > 0) {
+                const { data: linksData } = await supabase
+                  .from('card_links')
+                  .select('*')
+                  .in('card_id', cardIds)
+                  .order('position_order', { ascending: true });
+                if (linksData) {
+                  linksData.forEach((l: any) => {
+                    if (!linksMap[l.card_id]) linksMap[l.card_id] = [];
+                    linksMap[l.card_id].push(l);
+                  });
+                }
               }
+              sbCards = fetched.map((c: any) => ({
+                ...c,
+                links: linksMap[c.id] || [],
+              }));
             }
-            sbCards = fetched.map((c: any) => ({
-              ...c,
-              links: linksMap[c.id] || [],
-            }));
           }
         } catch (e) {
           console.warn('Error obteniendo tarjetas de Supabase:', e);
         }
       }
 
-      // 3. Cargar tarjetas locales y filtrar por usuario
-      let local = getStoredCards();
-      const userLocal = isSuperAdmin
-        ? local
-        : loggedUser
-        ? local.filter((c) => c.user_id === loggedUser.id)
-        : local;
+      let finalCards: FullCard[] = [];
 
-      // 4. Integrar borradores locales pendientes
-      let hasAnyDraft = false;
-      const localWithDrafts = userLocal.map((c) => {
-        const draft = loadDashboardDraft(c.id);
-        if (draft && draft.card) {
-          hasAnyDraft = true;
-          return { ...c, ...draft.card };
-        }
-        return c;
-      });
-      if (hasAnyDraft) setDraftRestored(true);
+      if (sbConnected) {
+        // Supabase es la fuente oficial y autoritativa para usuarios autenticados
+        let hasAnyDraft = false;
+        finalCards = sbCards.map((c) => {
+          const draft = loadDashboardDraft(c.id);
+          if (draft && draft.card) {
+            hasAnyDraft = true;
+            return { ...c, ...draft.card };
+          }
+          return c;
+        });
+        if (hasAnyDraft) setDraftRestored(true);
 
-      // 5. Unificar tarjetas de Supabase y locales
-      const map = new Map<string, FullCard>();
-      sbCards.forEach((c) => {
-        if (c?.id) map.set(c.id, c);
-      });
-      localWithDrafts.forEach((c) => {
-        if (c?.id) {
-          const existing = map.get(c.id);
-          if (existing) {
-            const localTime = c.updated_at ? new Date(c.updated_at).getTime() : 0;
-            const serverTime = existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
-            if (localTime >= serverTime) {
-              map.set(c.id, c);
-            }
-          } else {
+        // Sincronizar localStorage con la base de datos real (purga tarjetas eliminadas o de otros usuarios)
+        persistCards(finalCards);
+      } else {
+        // Fallback local/offline si Supabase no está conectado
+        let local = getStoredCards();
+        const userLocal = isSuperAdmin
+          ? local
+          : loggedUser
+          ? local.filter((c) => c.user_id === loggedUser.id)
+          : local;
+
+        let hasAnyDraft = false;
+        const localWithDrafts = userLocal.map((c) => {
+          const draft = loadDashboardDraft(c.id);
+          if (draft && draft.card) {
+            hasAnyDraft = true;
+            return { ...c, ...draft.card };
+          }
+          return c;
+        });
+        if (hasAnyDraft) setDraftRestored(true);
+
+        const map = new Map<string, FullCard>();
+        sbCards.forEach((c) => {
+          if (c?.id) map.set(c.id, c);
+        });
+        localWithDrafts.forEach((c) => {
+          if (c?.id && !map.has(c.id)) {
             map.set(c.id, c);
           }
-        }
-      });
+        });
+        finalCards = Array.from(map.values());
+      }
 
-      const finalCards = Array.from(map.values());
       setCards(finalCards);
       setIsLoading(false);
 
@@ -179,9 +192,13 @@ export default function DashboardPage() {
           setActiveCardId(luigiCard.id);
         } else if (finalCards.length > 0) {
           setActiveCardId(finalCards[0].id);
+        } else {
+          setActiveCardId('');
         }
       } else if (finalCards.length > 0) {
         setActiveCardId(finalCards[0].id);
+      } else {
+        setActiveCardId('');
       }
     };
 
@@ -210,6 +227,27 @@ export default function DashboardPage() {
     setLastAutoSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   };
 
+  const handleSelectTemplate = (preset: PresetTemplate) => {
+    handleCardUpdate({
+      layout_type: preset.layout_type,
+      avatar_position: preset.avatar_position,
+      button_style: preset.button_style,
+      border_radius: preset.border_radius,
+      primary_color: preset.colors.primary,
+      secondary_color: preset.colors.secondary,
+      accent_color: preset.colors.accent,
+      background_color: preset.colors.background,
+      font_family: preset.font_family,
+      font_weight: preset.font_weight,
+      background_texture: preset.background_texture || 'none',
+      avatar_effect: preset.avatar_effect || 'none',
+      card_badge: preset.card_badge || 'none',
+    });
+  };
+
+  // Control de Inactividad de 5 Minutos (Auto-Logout por seguridad)
+  useInactivityTimeout(true);
+
   const handleLinksUpdate = (newLinks: CardLink[]) => {
     if (!currentCard) return;
     const updated = { ...currentCard, links: newLinks, updated_at: new Date().toISOString() };
@@ -233,6 +271,10 @@ export default function DashboardPage() {
   const handleLogout = async () => {
     if (isSupabaseEnabled && supabase) {
       await supabase.auth.signOut();
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('proconnect_active_card_id');
+      clearCardDraft();
     }
     window.location.href = '/login';
   };
@@ -867,19 +909,7 @@ export default function DashboardPage() {
               showMobilePreview ? 'flex w-full' : 'hidden lg:flex'
             }`}
           >
-            <LivePreviewPhone card={currentCard} />
-
-            {/* En móvil: botón prominente para volver al editor de datos */}
-            <div className="lg:hidden mt-4 w-full max-w-[340px] px-2">
-              <button
-                type="button"
-                onClick={() => setShowMobilePreview(false)}
-                className="w-full py-3.5 px-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-xs flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all"
-              >
-                <User className="w-4 h-4 text-sky-400 dark:text-sky-600" />
-                <span>← Volver al Editor de Datos</span>
-              </button>
-            </div>
+            <LivePreviewPhone card={currentCard} onSelectTemplate={handleSelectTemplate} />
           </div>
         </div>
       </main>
