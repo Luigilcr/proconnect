@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
 import { getAnalyticsForCard } from '@/lib/data/card-store';
+import { isSuperAdminEmail } from '@/lib/db-normalize';
 
 interface MetricsOverviewProps {
   metrics: SystemMetrics;
@@ -779,26 +780,37 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
                   <div className="flex items-center justify-end gap-2">
                     <select
                       value={user.role}
+                      disabled={isSuperAdminEmail(user.email)}
                       onChange={(e) =>
                         onRoleChange(user.id, e.target.value as UserRole)
                       }
-                      className="px-2.5 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                      className={`px-2.5 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 ${
+                        isSuperAdminEmail(user.email) ? 'opacity-80 cursor-not-allowed font-bold text-rose-600 dark:text-rose-400' : ''
+                      }`}
                     >
                       <option value="client">Cliente</option>
                       <option value="org_admin">Admin Org.</option>
                       <option value="superadmin">Superadmin</option>
                     </select>
 
-                    {onDeleteUser && (
+                    {onDeleteUser && (isSuperAdminEmail(user.email) || user.role === 'superadmin') ? (
+                      <span
+                        title="Cuenta SuperAdmin oficial protegida contra eliminación accidental"
+                        className="px-2 py-1 rounded-lg text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 flex items-center gap-1 text-[10px] font-black"
+                      >
+                        <Shield className="w-3 h-3" />
+                        <span>Protegido</span>
+                      </span>
+                    ) : onDeleteUser ? (
                       <button
                         type="button"
                         onClick={() => setUserToDelete(user)}
-                        title="Eliminar usuario"
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                        title={`Eliminar usuario ${user.email}`}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </td>
               </tr>

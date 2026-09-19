@@ -38,12 +38,25 @@ export const DEMO_CARD_SLUGS = new Set([
   'marcos-tech',
   'sofia-valenzuela',
   'carlos-mendoza',
+  'valeria-design',
+  'prueba-direct-test',
+  'prueba-sin-expires',
+  'prueba-de-usuario',
+  'prueba-de-luigi',
 ]);
 
 export const DEMO_USER_EMAILS = new Set([
   'admin@proconnect.app',
   'elena@nexacorp.io',
   'carlos@mendozacapital.com',
+  'valeria@nexacorp.io',
+  'marcos@nexacorp.io',
+  'sofia@minimal.io',
+  'sofia@nexacorp.io',
+  'prueba-direct-test@proconnect.app',
+  'prueba-de-luigi@proconnect.app',
+  'prueba-de-usuario@proconnect.app',
+  'prueba-sin-expires@proconnect.app',
 ]);
 
 export const DEMO_ORG_SLUGS = new Set([

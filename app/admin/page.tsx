@@ -131,9 +131,38 @@ export default function SuperadminPage() {
     const localUsers = getStoredUsers(false);
     const localOrgs = getStoredOrganizations(false);
 
-    // 3. Filtrar estrictamente cualquier residuo de demo
+    // Listas persistentes de exclusión de eliminados por el administrador
+    let deletedCardIds = new Set<string>();
+    let deletedCardSlugs = new Set<string>();
+    let deletedUserIds = new Set<string>();
+    let deletedUserEmails = new Set<string>();
+
+    if (typeof window !== 'undefined') {
+      try {
+        const rawCIds = localStorage.getItem('proconnect_deleted_card_ids');
+        if (rawCIds) JSON.parse(rawCIds).forEach((id: string) => deletedCardIds.add(id));
+
+        const rawCSlugs = localStorage.getItem('proconnect_deleted_card_slugs');
+        if (rawCSlugs) JSON.parse(rawCSlugs).forEach((s: string) => deletedCardSlugs.add(s.toLowerCase()));
+
+        const rawUIds = localStorage.getItem('proconnect_deleted_user_ids');
+        if (rawUIds) JSON.parse(rawUIds).forEach((id: string) => deletedUserIds.add(id));
+
+        const rawUEmails = localStorage.getItem('proconnect_deleted_user_emails');
+        if (rawUEmails) JSON.parse(rawUEmails).forEach((e: string) => deletedUserEmails.add(e.toLowerCase()));
+      } catch (err) {}
+    }
+
+    // 3. Filtrar estrictamente cualquier residuo de demo o tarjetas eliminadas
     const finalCards = [...realCards, ...localCards.filter((c) => !realCards.some((rc) => rc.id === c.id))]
-      .filter((c) => c && c.slug && !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim()));
+      .filter(
+        (c) =>
+          c &&
+          c.slug &&
+          !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim()) &&
+          !deletedCardIds.has(c.id) &&
+          !deletedCardSlugs.has(c.slug.toLowerCase().trim())
+      );
 
     const finalOrgs = [...realOrgs, ...localOrgs.filter((o) => !realOrgs.some((ro) => ro.id === o.id))]
       .filter((o) => o && !DEMO_ORG_SLUGS.has(o.slug?.toLowerCase().trim()) && !DEMO_ORG_IDS.has(o.id));
@@ -141,15 +170,24 @@ export default function SuperadminPage() {
     // 4. Sintetizar cuentas de usuario a partir de tarjetas reales si no están en public.users
     const usersMap = new Map<string, User>();
     [...realUsers, ...localUsers].forEach((u) => {
-      if (u && u.email && !DEMO_USER_EMAILS.has(u.email.toLowerCase().trim())) {
+      if (
+        u &&
+        u.email &&
+        !DEMO_USER_EMAILS.has(u.email.toLowerCase().trim()) &&
+        !deletedUserIds.has(u.id) &&
+        !deletedUserEmails.has(u.email.toLowerCase().trim())
+      ) {
         usersMap.set(u.id || u.email, u);
       }
     });
 
     finalCards.forEach((c) => {
-      if (c.user_id && !usersMap.has(c.user_id)) {
+      if (c.user_id && !usersMap.has(c.user_id) && !deletedUserIds.has(c.user_id)) {
         const email = (c as any).user_email || (c as any).email || `${c.slug}@proconnect.app`;
-        if (!DEMO_USER_EMAILS.has(email.toLowerCase())) {
+        if (
+          !DEMO_USER_EMAILS.has(email.toLowerCase()) &&
+          !deletedUserEmails.has(email.toLowerCase())
+        ) {
           usersMap.set(c.user_id, {
             id: c.user_id,
             email: email,
@@ -161,7 +199,28 @@ export default function SuperadminPage() {
       }
     });
 
-    const finalUsers = Array.from(usersMap.values());
+    // 5. Asegurar siempre la cuenta principal de SuperAdmin
+    const adminEmail = 'luigicolonico@gmail.com';
+    let adminUser = Array.from(usersMap.values()).find((u) => isSuperAdminEmail(u.email));
+    if (!adminUser) {
+      usersMap.set('superadmin_luigi', {
+        id: 'superadmin_luigi',
+        email: adminEmail,
+        full_name: 'Luigi Colonico',
+        role: 'superadmin',
+        created_at: '2026-09-17T23:28:00.000Z',
+      });
+    } else {
+      adminUser.role = 'superadmin';
+    }
+
+    const finalUsers = Array.from(usersMap.values()).filter(
+      (u) =>
+        u &&
+        !DEMO_USER_EMAILS.has(u.email.toLowerCase().trim()) &&
+        !deletedUserIds.has(u.id) &&
+        !deletedUserEmails.has(u.email.toLowerCase().trim())
+    );
 
     setUsers(finalUsers);
     setCards(finalCards);
@@ -217,24 +276,57 @@ export default function SuperadminPage() {
   };
 
   const handleDeleteCard = async (cardId: string) => {
-    deleteCard(cardId);
-    setCards((prev) => prev.filter((c) => c.id !== cardId));
+    const targetCard = cards.find((c) => c.id === cardId);
+    const targetSlug = targetCard?.slug;
 
-    if (isSupabaseEnabled && supabase) {
+    // 1. Guardar en exclusión persistente de localStorage para que no reviva
+    if (typeof window !== 'undefined') {
       try {
-        await supabase.from('cards').delete().eq('id', cardId);
+        const rawIds = localStorage.getItem('proconnect_deleted_card_ids');
+        const ids: string[] = rawIds ? JSON.parse(rawIds) : [];
+        if (!ids.includes(cardId)) {
+          ids.push(cardId);
+          localStorage.setItem('proconnect_deleted_card_ids', JSON.stringify(ids));
+        }
+
+        if (targetSlug) {
+          const rawSlugs = localStorage.getItem('proconnect_deleted_card_slugs');
+          const slugs: string[] = rawSlugs ? JSON.parse(rawSlugs) : [];
+          if (!slugs.includes(targetSlug.toLowerCase())) {
+            slugs.push(targetSlug.toLowerCase());
+            localStorage.setItem('proconnect_deleted_card_slugs', JSON.stringify(slugs));
+          }
+        }
       } catch (e) {}
     }
 
+    deleteCard(cardId);
+    setCards((prev) => prev.filter((c) => c.id !== cardId));
+
+    // 2. Eliminar en Supabase (card_links primero por foreign key)
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('card_links').delete().eq('card_id', cardId);
+        await supabase.from('cards').delete().eq('id', cardId);
+        if (targetSlug) {
+          await supabase.from('cards').delete().ilike('slug', targetSlug);
+        }
+      } catch (e) {
+        console.warn('Error eliminando en Supabase:', e);
+      }
+    }
+
+    // 3. Notificar a la API del servidor
     try {
-      await fetch(`/api/cards?id=${encodeURIComponent(cardId)}`, {
-        method: 'DELETE',
-      });
+      const url = targetSlug
+        ? `/api/cards?id=${encodeURIComponent(cardId)}&slug=${encodeURIComponent(targetSlug)}`
+        : `/api/cards?id=${encodeURIComponent(cardId)}`;
+      await fetch(url, { method: 'DELETE' });
     } catch (err) {
       console.error('Error al eliminar tarjeta en servidor:', err);
     }
 
-    loadData();
+    await loadData();
   };
 
   const handleUserRoleChange = async (userId: string, newRole: UserRole) => {
@@ -248,23 +340,66 @@ export default function SuperadminPage() {
   };
 
   const handleDeleteUser = async (userId: string) => {
-    // 1. Filtrar localmente
-    setUsers((prev) => prev.filter((u) => u.id !== userId));
-    const userCards = cards.filter((c) => c.user_id === userId);
-    setCards((prev) => prev.filter((c) => c.user_id !== userId));
-    userCards.forEach((c) => deleteCard(c.id));
+    const targetUser = users.find((u) => u.id === userId);
+    if (targetUser && (isSuperAdminEmail(targetUser.email) || targetUser.role === 'superadmin')) {
+      alert('La cuenta de SuperAdmin principal está protegida y no puede ser eliminada.');
+      return;
+    }
 
-    // 2. Eliminar de Supabase si está disponible
+    // 1. Registrar en lista de exclusión persistente
+    if (typeof window !== 'undefined') {
+      try {
+        const rawUIds = localStorage.getItem('proconnect_deleted_user_ids');
+        const uids: string[] = rawUIds ? JSON.parse(rawUIds) : [];
+        if (!uids.includes(userId)) {
+          uids.push(userId);
+          localStorage.setItem('proconnect_deleted_user_ids', JSON.stringify(uids));
+        }
+
+        if (targetUser?.email) {
+          const rawUEmails = localStorage.getItem('proconnect_deleted_user_emails');
+          const uemails: string[] = rawUEmails ? JSON.parse(rawUEmails) : [];
+          if (!uemails.includes(targetUser.email.toLowerCase())) {
+            uemails.push(targetUser.email.toLowerCase());
+            localStorage.setItem('proconnect_deleted_user_emails', JSON.stringify(uemails));
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 2. Eliminar todas las tarjetas vinculadas al usuario
+    const userCards = cards.filter(
+      (c) => c.user_id === userId || (targetUser?.email && (c as any).user_email === targetUser.email)
+    );
+
+    for (const uc of userCards) {
+      deleteCard(uc.id);
+      try {
+        await fetch(`/api/cards?id=${encodeURIComponent(uc.id)}&slug=${encodeURIComponent(uc.slug)}`, {
+          method: 'DELETE',
+        });
+      } catch (e) {}
+      if (isSupabaseEnabled && supabase) {
+        try {
+          await supabase.from('card_links').delete().eq('card_id', uc.id);
+          await supabase.from('cards').delete().eq('id', uc.id);
+        } catch (e) {}
+      }
+    }
+
+    // 3. Eliminar de Supabase
     if (isSupabaseEnabled && supabase) {
       try {
-        await supabase.from('cards').delete().eq('user_id', userId);
         await supabase.from('users').delete().eq('id', userId);
       } catch (err) {
         console.warn('Error eliminando usuario de Supabase:', err);
       }
     }
 
-    loadData();
+    setUsers((prev) => prev.filter((u) => u.id !== userId));
+    setCards((prev) => prev.filter((c) => c.user_id !== userId));
+
+    await loadData();
   };
 
   const handleToggleOrgSubscription = (orgId: string) => {

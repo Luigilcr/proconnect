@@ -6,10 +6,14 @@ import { FullCard } from '@/lib/types';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { normalizeCardForDatabase } from '@/lib/db-normalize';
 
+import { DEMO_CARD_SLUGS } from '@/lib/data/card-store';
+
 const DATA_FILE = path.join(process.cwd(), 'data', 'cards.json');
 
-// In-memory fallback
+// In-memory fallback and deleted cards blacklist
 let inMemoryCards: FullCard[] = [];
+const deletedCardsIds = new Set<string>();
+const deletedCardsSlugs = new Set<string>();
 
 function loadServerCards(): FullCard[] {
   try {
@@ -17,14 +21,28 @@ function loadServerCards(): FullCard[] {
       const raw = fs.readFileSync(DATA_FILE, 'utf-8').replace(/^\uFEFF/, '').trim();
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        inMemoryCards = parsed;
+        inMemoryCards = parsed.filter(
+          (c) =>
+            c &&
+            c.slug &&
+            !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim()) &&
+            !deletedCardsIds.has(c.id) &&
+            !deletedCardsSlugs.has(c.slug.toLowerCase().trim())
+        );
         return inMemoryCards;
       }
     }
   } catch (err) {
     console.error('Error reading cards file:', err);
   }
-  return inMemoryCards;
+  return inMemoryCards.filter(
+    (c) =>
+      c &&
+      c.slug &&
+      !DEMO_CARD_SLUGS.has(c.slug.toLowerCase().trim()) &&
+      !deletedCardsIds.has(c.id) &&
+      !deletedCardsSlugs.has(c.slug.toLowerCase().trim())
+  );
 }
 
 function persistServerCards(cards: FullCard[]) {
@@ -35,7 +53,7 @@ function persistServerCards(cards: FullCard[]) {
     }
     fs.writeFileSync(DATA_FILE, JSON.stringify(cards, null, 2), 'utf-8');
   } catch (err) {
-    console.error('Error writing cards file:', err);
+    // Vercel serverless filesystem is read-only at runtime; in-memory cache handles this
   }
 }
 
@@ -189,20 +207,37 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Se requiere id o slug' }, { status: 400 });
     }
 
+    if (cardId) deletedCardsIds.add(cardId);
+    if (slug) deletedCardsSlugs.add(slug);
+
     let cards = loadServerCards();
-    const initialLen = cards.length;
     cards = cards.filter((c) => {
       if (cardId && c.id === cardId) return false;
       if (slug && c.slug?.toLowerCase().trim() === slug) return false;
       return true;
     });
 
-    if (cards.length === initialLen) {
-      return NextResponse.json({ success: false, error: 'Tarjeta no encontrada' }, { status: 404 });
-    }
-
     inMemoryCards = cards;
     persistServerCards(cards);
+
+    // Eliminar también en Supabase
+    if (isSupabaseEnabled && supabase) {
+      try {
+        if (cardId) {
+          await supabase.from('card_links').delete().eq('card_id', cardId);
+          await supabase.from('cards').delete().eq('id', cardId);
+        }
+        if (slug) {
+          const { data: cData } = await supabase.from('cards').select('id').ilike('slug', slug).maybeSingle();
+          if (cData?.id) {
+            await supabase.from('card_links').delete().eq('card_id', cData.id);
+            await supabase.from('cards').delete().eq('id', cData.id);
+          }
+        }
+      } catch (sbErr) {
+        console.warn('Error eliminando en Supabase en DELETE /api/cards:', sbErr);
+      }
+    }
 
     return NextResponse.json({ success: true, message: 'Tarjeta eliminada exitosamente' });
   } catch (err: any) {
