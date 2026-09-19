@@ -10,6 +10,7 @@ import { Radio, Lock, Mail, ArrowRight, ShieldCheck, User, Building2, Eye, EyeOf
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { isSupabaseEnabled, supabase } from '@/lib/supabase';
+import { isSuperAdminEmail } from '@/lib/db-normalize';
 
 type Mode = 'login' | 'register';
 
@@ -32,7 +33,7 @@ function LoginForm() {
     if (isSupabaseEnabled && supabase) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.user) {
-          if (session.user.email?.toLowerCase() === 'luigicolonico@gmail.com') {
+          if (isSuperAdminEmail(session.user.email)) {
             window.location.href = '/admin';
           } else {
             window.location.href = redirectTo;
@@ -121,7 +122,7 @@ function LoginForm() {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           let role = 'client';
-          if (user.email?.toLowerCase() === 'luigicolonico@gmail.com') {
+          if (isSuperAdminEmail(user.email)) {
             role = 'superadmin';
           } else {
             const { data: profile } = await supabase

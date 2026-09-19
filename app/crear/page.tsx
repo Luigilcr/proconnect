@@ -23,6 +23,7 @@ import { saveCardDraft, loadCardDraft, clearCardDraft } from '@/lib/draft-store'
 import { AuthModal } from '@/components/auth/AuthModal';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { compressImage } from '@/lib/image-compressor';
+import { normalizeCardForDatabase, isSuperAdminEmail } from '@/lib/db-normalize';
 import {
   Sparkles,
   ArrowRight,
@@ -560,6 +561,9 @@ export default function CrearTarjetaPage() {
       card_badge: activeTemplate.card_badge || previewCard.card_badge,
     };
 
+    // Normalizar datos para PostgreSQL (garantiza enums válidos como 'filled', UUIDs e integridad)
+    const dbCard = normalizeCardForDatabase(finalizedCard, user.id, user.email);
+
     // 1. Guardar en store local y cache por slug de alta prioridad
     saveCard(finalizedCard);
     if (typeof window !== 'undefined') {
@@ -574,74 +578,59 @@ export default function CrearTarjetaPage() {
     // 2. Sincronizar en Supabase si está disponible
     if (isSupabaseEnabled && supabase) {
       try {
-        // Intento 1: Llamar a la función RPC segura save_public_card (bypassa RLS)
+        // Intento 1: Llamar a la función RPC segura save_public_card con datos normalizados
         const { data: rpcData, error: rpcError } = await supabase.rpc('save_public_card', {
-          p_card: {
-            ...finalizedCard,
-            user_email: user.email,
-          },
+          p_card: dbCard,
         });
 
         if (rpcError) {
-          console.warn('RPC save_public_card aún no activo en Supabase, reintentando upsert estándar:', rpcError.message);
+          console.warn('RPC save_public_card falló o no está actualizado, reintentando upsert estándar:', rpcError.message);
           
+          const isSuper = isSuperAdminEmail(user.email);
           await supabase.from('users').upsert({
-            id: user.id,
+            id: dbCard.user_id,
             email: user.email || '',
-            full_name: finalizedCard.full_name,
-            role: user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? 'superadmin' : 'client',
+            full_name: dbCard.full_name,
+            role: isSuper ? 'superadmin' : 'client',
           });
 
-          await supabase.from('cards').upsert({
-            id: finalizedCard.id,
-            user_id: user.id,
-            slug: finalizedCard.slug,
-            full_name: finalizedCard.full_name,
-            job_title: finalizedCard.job_title,
-            company_name: finalizedCard.company_name,
-            bio: finalizedCard.bio,
-            profile_photo_url: finalizedCard.profile_photo_url,
-            cover_photo_url: finalizedCard.cover_photo_url,
-            logo_url: finalizedCard.logo_url,
-            layout_type: finalizedCard.layout_type || 'modern',
-            avatar_position: finalizedCard.avatar_position || 'header_floating',
-            button_style: finalizedCard.button_style || 'solid',
-            border_radius: finalizedCard.border_radius || 'md',
-            primary_color: finalizedCard.primary_color || '#0EA5E9',
-            secondary_color: finalizedCard.secondary_color || '#0369A1',
-            accent_color: finalizedCard.accent_color || '#38BDF8',
-            background_color: finalizedCard.background_color || '#0F172A',
-            font_family: finalizedCard.font_family || 'Inter',
-            font_weight: finalizedCard.font_weight || 'medium',
-            include_photo: finalizedCard.include_photo ?? true,
-            custom_vcf_notes: finalizedCard.custom_vcf_notes || '',
-            is_active: finalizedCard.is_active ?? true,
-            expires_at: finalizedCard.expires_at || new Date(Date.now() + 30 * 86400000).toISOString(),
+          const { error: cardUpsertErr } = await supabase.from('cards').upsert({
+            id: dbCard.id,
+            user_id: dbCard.user_id,
+            organization_id: dbCard.organization_id,
+            slug: dbCard.slug,
+            full_name: dbCard.full_name,
+            job_title: dbCard.job_title,
+            company_name: dbCard.company_name,
+            bio: dbCard.bio,
+            profile_photo_url: dbCard.profile_photo_url,
+            cover_photo_url: dbCard.cover_photo_url,
+            logo_url: dbCard.logo_url,
+            layout_type: dbCard.layout_type,
+            avatar_position: dbCard.avatar_position,
+            button_style: dbCard.button_style,
+            border_radius: dbCard.border_radius,
+            primary_color: dbCard.primary_color,
+            secondary_color: dbCard.secondary_color,
+            accent_color: dbCard.accent_color,
+            background_color: dbCard.background_color,
+            font_family: dbCard.font_family,
+            font_weight: dbCard.font_weight,
+            include_photo: dbCard.include_photo,
+            custom_vcf_notes: dbCard.custom_vcf_notes,
+            is_active: dbCard.is_active,
+            expires_at: dbCard.expires_at,
             updated_at: new Date().toISOString(),
           });
 
-          await supabase.from('card_links').delete().eq('card_id', finalizedCard.id);
+          if (cardUpsertErr) {
+            console.error('Error en upsert directo de cards:', cardUpsertErr);
+          }
 
-          if (Array.isArray(finalizedCard.links) && finalizedCard.links.length > 0) {
-            const seen = new Set<string>();
-            const uniqueLinks = finalizedCard.links.filter((l) => {
-              const key = `${l.type}:${(l.url || '').trim().toLowerCase()}`;
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
+          await supabase.from('card_links').delete().eq('card_id', dbCard.id);
 
-            const linksToInsert = uniqueLinks.map((l, idx) => ({
-              id: l.id && l.id.includes('-') && l.id.length >= 32 ? l.id : crypto.randomUUID(),
-              card_id: finalizedCard.id,
-              type: l.type || 'website',
-              label: l.label,
-              url: l.url,
-              icon_name: l.icon_name || null,
-              is_active: l.is_active ?? true,
-              position_order: idx + 1,
-            }));
-            await supabase.from('card_links').insert(linksToInsert);
+          if (Array.isArray(dbCard.links) && dbCard.links.length > 0) {
+            await supabase.from('card_links').insert(dbCard.links);
           }
         }
       } catch (err) {
@@ -654,7 +643,7 @@ export default function CrearTarjetaPage() {
       await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card: { ...finalizedCard, user_email: user.email } }),
+        body: JSON.stringify({ card: dbCard }),
       });
     } catch (e) {
       console.warn('Error al sincronizar tarjeta con el servidor:', e);

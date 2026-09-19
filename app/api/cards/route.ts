@@ -4,6 +4,7 @@ import path from 'path';
 import { DEMO_CARDS } from '@/lib/data/demo-data';
 import { FullCard } from '@/lib/types';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+import { normalizeCardForDatabase } from '@/lib/db-normalize';
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'cards.json');
 
@@ -88,11 +89,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const card: FullCard = body.card || body;
+    const rawCard: FullCard = body.card || body;
 
-    if (!card || !card.slug) {
+    if (!rawCard || !rawCard.slug) {
       return NextResponse.json({ success: false, error: 'Datos de tarjeta inválidos' }, { status: 400 });
     }
+
+    const card = normalizeCardForDatabase(rawCard, rawCard.user_id, (rawCard as any).user_email || (rawCard as any).email);
 
     const cards = loadServerCards();
     const slugNorm = card.slug.toLowerCase().trim();
@@ -122,7 +125,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: true, card: rpcCard });
         }
 
-        // Fallback a upsert directo si RPC no está desplegado aún
+        // Fallback a upsert directo con datos normalizados
         await supabase.from('cards').upsert({
           id: card.id,
           user_id: card.user_id,
@@ -135,36 +138,26 @@ export async function POST(request: NextRequest) {
           profile_photo_url: card.profile_photo_url,
           cover_photo_url: card.cover_photo_url,
           logo_url: card.logo_url,
-          layout_type: card.layout_type || 'modern',
-          avatar_position: card.avatar_position || 'header_floating',
-          button_style: card.button_style || 'solid',
-          border_radius: card.border_radius || 'md',
-          primary_color: card.primary_color || '#0EA5E9',
-          secondary_color: card.secondary_color || '#0369A1',
-          accent_color: card.accent_color || '#38BDF8',
-          background_color: card.background_color || '#0F172A',
-          font_family: card.font_family || 'Inter',
-          font_weight: card.font_weight || 'medium',
-          include_photo: card.include_photo ?? true,
-          custom_vcf_notes: card.custom_vcf_notes || '',
-          is_active: card.is_active ?? true,
-          expires_at: card.expires_at || null,
+          layout_type: card.layout_type,
+          avatar_position: card.avatar_position,
+          button_style: card.button_style,
+          border_radius: card.border_radius,
+          primary_color: card.primary_color,
+          secondary_color: card.secondary_color,
+          accent_color: card.accent_color,
+          background_color: card.background_color,
+          font_family: card.font_family,
+          font_weight: card.font_weight,
+          include_photo: card.include_photo,
+          custom_vcf_notes: card.custom_vcf_notes,
+          is_active: card.is_active,
+          expires_at: card.expires_at,
           updated_at: new Date().toISOString(),
         });
 
         if (Array.isArray(card.links) && card.links.length > 0) {
           await supabase.from('card_links').delete().eq('card_id', card.id);
-          const linksToInsert = card.links.map((l, idx) => ({
-            id: l.id && l.id.includes('-') && l.id.length >= 32 ? l.id : crypto.randomUUID(),
-            card_id: card.id,
-            type: l.type || 'website',
-            label: l.label,
-            url: l.url,
-            icon_name: l.icon_name || null,
-            is_active: l.is_active ?? true,
-            position_order: idx + 1,
-          }));
-          await supabase.from('card_links').insert(linksToInsert);
+          await supabase.from('card_links').insert(card.links);
         }
       } catch (sbErr) {
         console.warn('Error sincronizando con Supabase en POST /api/cards:', sbErr);

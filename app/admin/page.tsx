@@ -29,6 +29,7 @@ import {
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+import { isSuperAdminEmail } from '@/lib/db-normalize';
 import { ShieldCheck, RefreshCw, AlertCircle, Filter, CheckCircle2 } from 'lucide-react';
 
 export default function SuperadminPage() {
@@ -62,7 +63,14 @@ export default function SuperadminPage() {
         ]);
 
         if (usersRes.data && usersRes.data.length > 0) {
-          realUsers = usersRes.data;
+          realUsers = usersRes.data.map((u) => {
+            if (isSuperAdminEmail(u.email) && u.role !== 'superadmin') {
+              // Auto-elevar en base de datos
+              supabase?.from('users').update({ role: 'superadmin' }).eq('id', u.id).then();
+              return { ...u, role: 'superadmin' as UserRole };
+            }
+            return u;
+          });
         }
         if (cardsRes.data && cardsRes.data.length > 0) {
           realCards = cardsRes.data;
@@ -73,6 +81,23 @@ export default function SuperadminPage() {
       } catch (err) {
         console.warn('Error cargando datos de Supabase en Admin:', err);
       }
+    }
+
+    // 1.1 Si no hay tarjetas de Supabase por RLS, consultar la API del servidor /api/cards
+    try {
+      const apiRes = await fetch('/api/cards');
+      const apiData = await apiRes.json();
+      if (apiData?.success && Array.isArray(apiData.cards)) {
+        const existingIds = new Set(realCards.map((c) => c.id));
+        const existingSlugs = new Set(realCards.map((c) => c.slug.toLowerCase()));
+        for (const card of apiData.cards) {
+          if (!existingIds.has(card.id) && !existingSlugs.has(card.slug.toLowerCase())) {
+            realCards.push(card);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error al consultar /api/cards en admin:', e);
     }
 
     // 2. Cargar datos locales de respaldo

@@ -10,6 +10,7 @@ import { FullCard, CardLink, CatalogMultimedia } from '@/lib/types';
 import { getStoredCards, saveCard, renewCardSubscription, persistCards } from '@/lib/data/card-store';
 import { saveDashboardDraft, loadDashboardDraft, clearDashboardDraft } from '@/lib/draft-store';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+import { normalizeCardForDatabase, isSuperAdminEmail } from '@/lib/db-normalize';
 import { IdentityEditor } from '@/components/dashboard/IdentityEditor';
 import { DesignCustomizer } from '@/components/dashboard/DesignCustomizer';
 import { LinksEditor } from '@/components/dashboard/LinksEditor';
@@ -75,7 +76,7 @@ export default function DashboardPage() {
           if (session?.user) {
             loggedUser = session.user;
             setAuthUser(session.user);
-            isSuperAdmin = session.user.email?.toLowerCase() === 'luigicolonico@gmail.com';
+            isSuperAdmin = isSuperAdminEmail(session.user.email);
             setIsSuperAdmin(isSuperAdmin);
           } else {
             // Si Supabase está activo y no hay sesión, enviar al login
@@ -262,46 +263,39 @@ export default function DashboardPage() {
       // 1. Sincronizar en Supabase si está activo
       if (isSupabaseEnabled && supabase && authUser) {
         try {
+          const dbCard = normalizeCardForDatabase(cleanedCard, authUser.id, authUser.email);
           await supabase.from('cards').upsert({
-            id: cleanedCard.id,
-            user_id: cleanedCard.user_id || authUser.id,
-            slug: cleanedCard.slug,
-            full_name: cleanedCard.full_name,
-            job_title: cleanedCard.job_title,
-            company_name: cleanedCard.company_name,
-            bio: cleanedCard.bio,
-            profile_photo_url: cleanedCard.profile_photo_url,
-            cover_photo_url: cleanedCard.cover_photo_url,
-            logo_url: cleanedCard.logo_url,
-            layout_type: cleanedCard.layout_type || 'modern',
-            avatar_position: cleanedCard.avatar_position || 'header_floating',
-            button_style: cleanedCard.button_style || 'solid',
-            border_radius: cleanedCard.border_radius || 'md',
-            primary_color: cleanedCard.primary_color || '#0EA5E9',
-            secondary_color: cleanedCard.secondary_color || '#0369A1',
-            accent_color: cleanedCard.accent_color || '#38BDF8',
-            background_color: cleanedCard.background_color || '#0F172A',
-            font_family: cleanedCard.font_family || 'Inter',
-            font_weight: cleanedCard.font_weight || 'medium',
-            include_photo: cleanedCard.include_photo ?? true,
-            custom_vcf_notes: cleanedCard.custom_vcf_notes || '',
-            is_active: cleanedCard.is_active ?? true,
-            updated_at: cleanedCard.updated_at,
+            id: dbCard.id,
+            user_id: dbCard.user_id,
+            slug: dbCard.slug,
+            full_name: dbCard.full_name,
+            job_title: dbCard.job_title,
+            company_name: dbCard.company_name,
+            bio: dbCard.bio,
+            profile_photo_url: dbCard.profile_photo_url,
+            cover_photo_url: dbCard.cover_photo_url,
+            logo_url: dbCard.logo_url,
+            layout_type: dbCard.layout_type,
+            avatar_position: dbCard.avatar_position,
+            button_style: dbCard.button_style,
+            border_radius: dbCard.border_radius,
+            primary_color: dbCard.primary_color,
+            secondary_color: dbCard.secondary_color,
+            accent_color: dbCard.accent_color,
+            background_color: dbCard.background_color,
+            font_family: dbCard.font_family,
+            font_weight: dbCard.font_weight,
+            include_photo: dbCard.include_photo,
+            custom_vcf_notes: dbCard.custom_vcf_notes,
+            is_active: dbCard.is_active,
+            updated_at: dbCard.updated_at,
           });
 
           // Sincronizar card_links: borrar anteriores y reinsertar los vigentes limpios
-          await supabase.from('card_links').delete().eq('card_id', cleanedCard.id);
+          await supabase.from('card_links').delete().eq('card_id', dbCard.id);
 
-          if (cleanedLinks.length > 0) {
-            const linksToInsert = cleanedLinks.map((l, idx) => ({
-              card_id: cleanedCard.id,
-              type: l.type,
-              label: l.label || l.type,
-              url: l.url,
-              position_order: idx,
-              is_active: l.is_active ?? true,
-            }));
-            await supabase.from('card_links').insert(linksToInsert);
+          if (Array.isArray(dbCard.links) && dbCard.links.length > 0) {
+            await supabase.from('card_links').insert(dbCard.links);
           }
         } catch (sbErr) {
           console.warn('Error guardando en Supabase:', sbErr);

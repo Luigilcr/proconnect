@@ -10,6 +10,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { LayoutDashboard, Shield, Building2, ExternalLink, Menu, X, LogOut, User as UserIcon } from 'lucide-react';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+import { isSuperAdminEmail } from '@/lib/db-normalize';
 
 export const Navbar: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -92,7 +93,7 @@ export const Navbar: React.FC = () => {
           {user ? (
             <div className="flex items-center gap-2">
               <Link
-                href={user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? '/admin' : '/dashboard'}
+                href={isSuperAdminEmail(user.email) ? '/admin' : '/dashboard'}
                 className="btn-brand text-xs px-3.5 sm:px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-md shadow-brand-blue/20"
                 title={`Conectado como ${user.email}`}
               >
@@ -153,7 +154,7 @@ export const Navbar: React.FC = () => {
           {user ? (
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
               <Link
-                href={user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? '/admin' : '/dashboard'}
+                href={isSuperAdminEmail(user.email) ? '/admin' : '/dashboard'}
                 className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 transition-colors"
                 onClick={() => setMobileOpen(false)}
               >

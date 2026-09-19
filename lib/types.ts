@@ -24,6 +24,7 @@ export type AvatarPosition =
 
 export type ButtonStyle =
   | 'solid'
+  | 'filled'
   | 'outline'
   | 'glassmorphism'
   | 'gradient'

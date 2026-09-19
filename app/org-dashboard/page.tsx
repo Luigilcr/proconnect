@@ -60,6 +60,7 @@ import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
+import { isSuperAdminEmail } from '@/lib/db-normalize';
 import {
   Building2,
   Briefcase,
@@ -220,7 +221,7 @@ export default function OrgDashboardPage() {
     !currentUser ||
     currentUser?.role === 'superadmin' ||
     currentUser?.role === 'org_admin' ||
-    currentUser?.email?.toLowerCase() === 'luigicolonico@gmail.com'
+    isSuperAdminEmail(currentUser?.email)
   );
 
   const [activeLeadForNotes, setActiveLeadForNotes] = useState<WhatsAppLead | null>(null);
@@ -302,7 +303,7 @@ export default function OrgDashboardPage() {
             .maybeSingle();
 
           if (userProfile) {
-            userRole = userProfile.role || (userSession.email?.toLowerCase() === 'luigicolonico@gmail.com' ? 'superadmin' : 'client');
+            userRole = userProfile.role || (isSuperAdminEmail(userSession.email) ? 'superadmin' : 'client');
             userOrgId = userProfile.organization_id || null;
             setCurrentUser({ ...userSession, ...userProfile, role: userRole });
           } else {
@@ -320,8 +321,8 @@ export default function OrgDashboardPage() {
     if (isSupabaseEnabled && supabase) {
       try {
         let query = supabase.from('organizations').select('*');
-        // Si no es superadmin ni luigicolonico@gmail.com, filtrar por su org asignada si tiene una
-        if (userRole !== 'superadmin' && userSession?.email?.toLowerCase() !== 'luigicolonico@gmail.com') {
+        // Si no es superadmin, filtrar por su org asignada si tiene una
+        if (userRole !== 'superadmin' && !isSuperAdminEmail(userSession?.email)) {
           if (userOrgId) {
             query = query.eq('id', userOrgId);
           }

@@ -2,17 +2,29 @@
 -- PROCONNECT: CORRECCIÓN DEFINITIVA DE PUBLICACIÓN DE TARJETAS Y RLS
 -- ==============================================================================
 -- Esta migración resuelve:
--- 1. Inserción de tarjetas por usuarios nuevos antes y después de confirmar su correo.
--- 2. Función RPC 'save_public_card' con SECURITY DEFINER para inserción garantizada.
--- 3. Visualización pública inmediata en /c/[slug] y para el crawler de WhatsApp.
+-- 1. Soporte de valores de enum ('solid' y 'filled' en button_style).
+-- 2. Asignación automática de rol SUPERADMIN a Luigi Colonico (ambos correos).
+-- 3. Función RPC 'save_public_card' con SECURITY DEFINER a prueba de fallos de tipos.
+-- 4. Políticas RLS permisivas para creación y lectura pública instantánea.
 -- ==============================================================================
 
--- 1. EXTENSIÓN Y TIPOS (Si no existen)
+-- 1. EXTENSIÓN Y ENUMS RESILIENTES
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 2. FUNCIÓN RPC: save_public_card (SECURITY DEFINER)
--- Permite que cualquier usuario (incluso con correo recién registrado pendiente de confirmar)
--- publique su tarjeta de inmediato en la base de datos Supabase.
+-- Permitir 'solid' en el enum button_style si aún no está presente
+DO $$ BEGIN
+    ALTER TYPE button_style ADD VALUE IF NOT EXISTS 'solid';
+EXCEPTION
+    WHEN duplicate_object THEN null;
+    WHEN undefined_object THEN null;
+END $$;
+
+-- 2. ASCENDER A LUIGI COLONICO A SUPERADMIN EN PUBLIC.USERS
+UPDATE public.users
+SET role = 'superadmin'::user_role
+WHERE LOWER(email) IN ('asesordeseguridad.luigilcr@gmail.com', 'luigicolonico@gmail.com');
+
+-- 3. FUNCIÓN RPC: save_public_card (SECURITY DEFINER)
 CREATE OR REPLACE FUNCTION public.save_public_card(p_card JSONB)
 RETURNS JSONB AS $$
 DECLARE
@@ -22,6 +34,13 @@ DECLARE
     v_email TEXT;
     v_full_name TEXT;
     v_link JSONB;
+    v_raw_layout TEXT;
+    v_layout layout_type;
+    v_raw_btn TEXT;
+    v_btn button_style;
+    v_raw_pos TEXT;
+    v_pos avatar_position;
+    v_is_superadmin BOOLEAN;
 BEGIN
     -- Validar slug
     v_slug := LOWER(TRIM(COALESCE(p_card->>'slug', '')));
@@ -32,39 +51,76 @@ BEGIN
     v_email := LOWER(TRIM(COALESCE(p_card->>'user_email', p_card->>'email', '')));
     v_full_name := COALESCE(p_card->>'full_name', 'Usuario ProConnect');
 
-    -- Determinar user_id
+    -- Determinar si es superadmin
+    v_is_superadmin := (
+        v_email = 'asesordeseguridad.luigilcr@gmail.com' OR 
+        v_email = 'luigicolonico@gmail.com' OR 
+        v_email = 'admin@proconnect.app'
+    );
+
+    -- Normalizar Enums de Forma Segura con variables tipadas
+    v_raw_layout := COALESCE(p_card->>'layout_type', 'modern');
+    IF v_raw_layout IN ('modern', 'executive', 'minimal', 'banner_header', 'card_id_badge', 'creative_grid') THEN
+        v_layout := v_raw_layout::layout_type;
+    ELSE
+        v_layout := 'modern'::layout_type;
+    END IF;
+
+    v_raw_btn := COALESCE(p_card->>'button_style', 'filled');
+    -- Si la BD tiene 'solid' o 'filled', normalizar a valor aceptado
+    IF v_raw_btn = 'solid' THEN
+        BEGIN
+            v_btn := 'solid'::button_style;
+        EXCEPTION WHEN OTHERS THEN
+            v_btn := 'filled'::button_style;
+        END;
+    ELSIF v_raw_btn IN ('filled', 'outline', 'glassmorphism', 'gradient', 'soft_shadow') THEN
+        v_btn := v_raw_btn::button_style;
+    ELSE
+        v_btn := 'filled'::button_style;
+    END IF;
+
+    v_raw_pos := COALESCE(p_card->>'avatar_position', 'header_floating');
+    IF v_raw_pos IN ('top_center', 'header_floating', 'left_aligned', 'hidden') THEN
+        v_pos := v_raw_pos::avatar_position;
+    ELSE
+        v_pos := 'header_floating'::avatar_position;
+    END IF;
+
+    -- Determinar user_id válido
     IF (p_card->>'user_id') IS NOT NULL AND (p_card->>'user_id') ~ '^[0-9a-fA-F-]{36}$' THEN
         v_user_id := (p_card->>'user_id')::UUID;
     ELSIF auth.uid() IS NOT NULL THEN
         v_user_id := auth.uid();
     ELSE
-        -- Buscar si el usuario ya existe en auth.users por email
         IF v_email <> '' THEN
             SELECT id INTO v_user_id FROM auth.users WHERE LOWER(email) = v_email LIMIT 1;
+            IF v_user_id IS NULL THEN
+                SELECT id INTO v_user_id FROM public.users WHERE LOWER(email) = v_email LIMIT 1;
+            END IF;
         END IF;
-        -- Si aún no existe, generar un UUID temporal
         IF v_user_id IS NULL THEN
             v_user_id := gen_random_uuid();
         END IF;
     END IF;
 
-    -- Asegurar existencia en public.users
+    -- Asegurar existencia en public.users con el rol correcto
     INSERT INTO public.users (id, email, full_name, role)
     VALUES (
         v_user_id,
         CASE WHEN v_email <> '' THEN v_email ELSE v_slug || '@proconnect.app' END,
         v_full_name,
-        CASE WHEN v_email = 'luigicolonico@gmail.com' THEN 'superadmin'::user_role ELSE 'client'::user_role END
+        CASE WHEN v_is_superadmin THEN 'superadmin'::user_role ELSE 'client'::user_role END
     )
     ON CONFLICT (id) DO UPDATE
     SET full_name = EXCLUDED.full_name,
+        role = CASE WHEN v_is_superadmin THEN 'superadmin'::user_role ELSE public.users.role END,
         updated_at = NOW();
 
     -- Determinar o preservar card_id
     IF (p_card->>'id') IS NOT NULL AND (p_card->>'id') ~ '^[0-9a-fA-F-]{36}$' THEN
         v_card_id := (p_card->>'id')::UUID;
     ELSE
-        -- Verificar si ya existe una tarjeta con este slug
         SELECT id INTO v_card_id FROM public.cards WHERE LOWER(TRIM(slug)) = v_slug LIMIT 1;
         IF v_card_id IS NULL THEN
             v_card_id := gen_random_uuid();
@@ -112,9 +168,9 @@ BEGIN
         p_card->>'profile_photo_url',
         p_card->>'cover_photo_url',
         p_card->>'logo_url',
-        COALESCE((p_card->>'layout_type')::layout_type, 'modern'::layout_type),
-        COALESCE((p_card->>'avatar_position')::avatar_position, 'header_floating'::avatar_position),
-        COALESCE((p_card->>'button_style')::button_style, 'filled'::button_style),
+        v_layout,
+        v_pos,
+        v_btn,
         COALESCE(p_card->>'border_radius', 'md'),
         COALESCE(p_card->>'primary_color', '#0EA5E9'),
         COALESCE(p_card->>'secondary_color', '#0369A1'),
@@ -187,7 +243,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Otorgar permisos de ejecución universal
 GRANT EXECUTE ON FUNCTION public.save_public_card(JSONB) TO anon, authenticated, service_role;
 
--- 3. ACTUALIZACIÓN DE POLÍTICAS RLS EN PUBLIC.CARDS
+-- 4. ACTUALIZACIÓN DE POLÍTICAS RLS EN PUBLIC.CARDS
 DROP POLICY IF EXISTS "Inserción pública de tarjetas" ON public.cards;
 CREATE POLICY "Inserción pública de tarjetas"
     ON public.cards FOR INSERT
@@ -203,7 +259,7 @@ CREATE POLICY "Lectura pública de tarjetas activas"
     ON public.cards FOR SELECT
     USING (true);
 
--- 4. ACTUALIZACIÓN DE POLÍTICAS RLS EN PUBLIC.CARD_LINKS
+-- 5. ACTUALIZACIÓN DE POLÍTICAS RLS EN PUBLIC.CARD_LINKS
 DROP POLICY IF EXISTS "Inserción pública de enlaces" ON public.card_links;
 CREATE POLICY "Inserción pública de enlaces"
     ON public.card_links FOR INSERT
@@ -214,7 +270,7 @@ CREATE POLICY "Gestión pública de enlaces"
     ON public.card_links FOR ALL
     USING (true);
 
--- 5. ACTUALIZACIÓN DE POLÍTICAS RLS EN PUBLIC.USERS
+-- 6. ACTUALIZACIÓN DE POLÍTICAS RLS EN PUBLIC.USERS
 DROP POLICY IF EXISTS "Inserción pública de usuarios" ON public.users;
 CREATE POLICY "Inserción pública de usuarios"
     ON public.users FOR INSERT
