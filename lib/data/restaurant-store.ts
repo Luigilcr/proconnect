@@ -1,4 +1,4 @@
-﻿// © ProConnect. Todos los derechos reservados.
+// © ProConnect. Todos los derechos reservados.
 // Queda prohibida la reproducción, copia o ingeniería inversa de este software.
 //
 // RESTAURANT STORE — Capa de datos para el módulo ProConnect Gastro
@@ -12,6 +12,7 @@ import {
   OrderItem,
   OrderStatus,
   RestaurantPaymentInfo,
+  RestaurantKPIs,
 } from '@/lib/types';
 
 const TABLES_KEY   = 'proconnect_restaurant_tables_v1';
@@ -259,4 +260,190 @@ export function savePaymentInfo(orgId: string, info: RestaurantPaymentInfo): voi
   const entry = { org_id: orgId, ...info };
   if (idx >= 0) all[idx] = entry; else all.push(entry);
   save(PAYMENT_KEY, all);
+}
+
+// ━━ WAITER ASSIGNMENT & CALLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export function assignWaiterToTable(tableId: string, waiterName: string | null): void {
+  const all = load<RestaurantTable>(TABLES_KEY, []);
+  const idx = all.findIndex((t) => t.id === tableId);
+  if (idx >= 0) {
+    all[idx].assigned_waiter = waiterName;
+    save(TABLES_KEY, all);
+  }
+}
+
+export function assignWaiterToOrder(orderId: string, waiterName: string | null): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0) {
+    all[idx].assigned_waiter = waiterName;
+    all[idx].updated_at = new Date().toISOString();
+    save(ORDERS_KEY, all);
+  }
+}
+
+export function callWaiterWithReason(orderId: string, reason: string): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0) {
+    all[idx].waiter_called = true;
+    all[idx].waiter_call_reason = reason;
+    all[idx].updated_at = new Date().toISOString();
+    save(ORDERS_KEY, all);
+  }
+}
+
+export function dismissWaiterCall(orderId: string): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0) {
+    all[idx].waiter_called = false;
+    all[idx].waiter_call_reason = null;
+    all[idx].updated_at = new Date().toISOString();
+    save(ORDERS_KEY, all);
+  }
+}
+
+export function requestBillWithTip(orderId: string, tipAmount: number): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0) {
+    all[idx].bill_requested = true;
+    all[idx].tip_amount = tipAmount;
+    all[idx].updated_at = new Date().toISOString();
+    save(ORDERS_KEY, all);
+  }
+}
+
+export function dismissBillRequest(orderId: string): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0) {
+    all[idx].bill_requested = false;
+    all[idx].updated_at = new Date().toISOString();
+    save(ORDERS_KEY, all);
+  }
+}
+
+// ━━ KDS & PREPARATION TIMERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export function updateOrderPrepStatus(orderId: string, status: OrderStatus): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0) {
+    all[idx].status = status;
+    const now = new Date().toISOString();
+    if (status === 'preparing' && !all[idx].prep_started_at) {
+      all[idx].prep_started_at = now;
+    }
+    if (status === 'delivered' && !all[idx].delivered_at) {
+      all[idx].delivered_at = now;
+    }
+    if (status === 'paid' && !all[idx].paid_at) {
+      all[idx].paid_at = now;
+    }
+    all[idx].updated_at = now;
+    save(ORDERS_KEY, all);
+  }
+}
+
+// ━━ RECEIPT REVIEW & CASHIER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export function submitPaymentWithReceipt(
+  orderId: string,
+  method: string,
+  reference: string,
+  receipt_base64: string | null
+): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0) {
+    all[idx].payment_data = {
+      method: method as any,
+      reference,
+      receipt_base64,
+      confirmed_at: null,
+      status: 'pending_approval',
+    };
+    all[idx].updated_at = new Date().toISOString();
+    save(ORDERS_KEY, all);
+  }
+}
+
+export function reviewPaymentReceipt(orderId: string, approved: boolean): void {
+  const all = load<TableOrder>(ORDERS_KEY, []);
+  const idx = all.findIndex((o) => o.id === orderId);
+  if (idx >= 0 && all[idx].payment_data) {
+    all[idx].payment_data!.status = approved ? 'approved' : 'rejected';
+    all[idx].payment_data!.confirmed_at = approved ? new Date().toISOString() : null;
+    if (approved) {
+      all[idx].status = 'paid';
+      all[idx].paid_at = new Date().toISOString();
+    }
+    all[idx].updated_at = new Date().toISOString();
+    save(ORDERS_KEY, all);
+  }
+}
+
+// ━━ RESTAURANT KPIS & ANALYTICS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export function getRestaurantKPIs(orgId: string): RestaurantKPIs {
+  ensureSeed(orgId);
+  const orders = getAllOrdersByOrg(orgId);
+  const menuItems = getMenuItems(orgId);
+
+  const totalRevenue = orders.reduce((sum, o) => {
+    const tip = o.tip_amount || 0;
+    return sum + (o.total || 0) + tip;
+  }, 0);
+
+  const totalOrders = orders.length;
+  const averageTicket = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+
+  const activeTablesCount = new Set(
+    orders.filter((o) => o.status !== 'paid' && o.status !== 'cancelled').map((o) => o.table_id)
+  ).size;
+
+  const salesMap: Record<string, { name: string; qty: number; revenue: number }> = {};
+  menuItems.forEach((m) => {
+    salesMap[m.name] = { name: m.name, qty: 0, revenue: 0 };
+  });
+
+  orders.forEach((ord) => {
+    ord.items?.forEach((item) => {
+      if (!salesMap[item.name]) {
+        salesMap[item.name] = { name: item.name, qty: 0, revenue: 0 };
+      }
+      salesMap[item.name].qty += item.qty;
+      salesMap[item.name].revenue += item.subtotal;
+    });
+  });
+
+  const sortedItems = Object.values(salesMap).sort((a, b) => b.qty - a.qty);
+  const topSellingItems = sortedItems.slice(0, 5);
+  const lowSellingItems = [...sortedItems].reverse().slice(0, 5);
+
+  let totalPrepMinutes = 0;
+  let prepCount = 0;
+  orders.forEach((o) => {
+    if (o.prep_started_at && o.delivered_at) {
+      const diffMs = new Date(o.delivered_at).getTime() - new Date(o.prep_started_at).getTime();
+      const mins = Math.max(1, Math.round(diffMs / 60000));
+      totalPrepMinutes += mins;
+      prepCount++;
+    }
+  });
+
+  const avgPreparationMinutes = prepCount > 0 ? Math.round(totalPrepMinutes / prepCount) : 14;
+
+  return {
+    totalRevenue,
+    totalOrders,
+    averageTicket,
+    activeTablesCount,
+    topSellingItems,
+    lowSellingItems,
+    avgPreparationMinutes,
+  };
 }

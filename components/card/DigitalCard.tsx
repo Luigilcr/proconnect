@@ -178,6 +178,10 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
         return 'font-roboto';
       case 'montserrat':
         return 'font-montserrat';
+      case 'cinzel':
+        return 'font-serif tracking-wider';
+      case 'syne':
+        return 'font-sans font-bold tracking-wide';
       default:
         return 'font-sans';
     }
@@ -196,6 +200,111 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
     }
   };
 
+  // Helper: Texturas de fondo CSS dinámicas
+  const getTextureStyle = () => {
+    switch (card.background_texture) {
+      case 'dots':
+        return {
+          backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px)',
+          backgroundSize: '16px 16px',
+        };
+      case 'grid':
+        return {
+          backgroundImage:
+            'linear-gradient(to right, rgba(255, 255, 255, 0.07) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, 0.07) 1px, transparent 1px)',
+          backgroundSize: '20px 20px',
+        };
+      case 'carbon':
+        return {
+          backgroundImage:
+            'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.25) 0px, rgba(0, 0, 0, 0.25) 2px, transparent 2px, transparent 4px)',
+        };
+      case 'subtle_noise':
+        return {
+          backgroundImage:
+            'radial-gradient(ellipse at top left, rgba(255,255,255,0.08), transparent 70%), radial-gradient(ellipse at bottom right, rgba(0,0,0,0.3), transparent 70%)',
+        };
+      case 'mesh_gradient':
+        return {
+          backgroundImage: `radial-gradient(circle at 15% 15%, ${card.primary_color}35, transparent 50%), radial-gradient(circle at 85% 85%, ${
+            card.accent_color || card.secondary_color
+          }30, transparent 50%)`,
+        };
+      default:
+        return {};
+    }
+  };
+
+  // Helper: Efecto de avatar (glow, metallic ring, glass)
+  const getAvatarEffectStyle = () => {
+    switch (card.avatar_effect) {
+      case 'glow_primary':
+        return {
+          borderColor: card.primary_color,
+          boxShadow: `0 0 25px ${card.primary_color}90, 0 0 50px ${card.primary_color}35`,
+        };
+      case 'glow_accent':
+        return {
+          borderColor: card.accent_color || '#38bdf8',
+          boxShadow: `0 0 25px ${card.accent_color || '#38bdf8'}95, 0 0 50px ${card.accent_color || '#38bdf8'}35`,
+        };
+      case 'metallic_ring':
+        return {
+          borderColor: '#F59E0B',
+          boxShadow: '0 0 18px rgba(245, 158, 11, 0.55), inset 0 0 10px rgba(245, 158, 11, 0.3)',
+        };
+      case 'glass_border':
+        return {
+          borderColor: 'rgba(255, 255, 255, 0.45)',
+          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+          backdropFilter: 'blur(8px)',
+        };
+      default:
+        return {
+          borderColor: card.primary_color,
+          boxShadow: `0 0 20px ${card.primary_color}40`,
+        };
+    }
+  };
+
+  // Helper: Insignia de verificación
+  const renderCardBadge = () => {
+    if (!card.card_badge || card.card_badge === 'none') return null;
+
+    switch (card.card_badge) {
+      case 'verified_pro':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30 tracking-wide">
+            <CheckCircle2 className="w-3 h-3 text-sky-400 shrink-0" />
+            PRO VERIFICADO
+          </span>
+        );
+      case 'vip_executive':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 tracking-wide">
+            <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
+            VIP EXECUTIVE
+          </span>
+        );
+      case 'top_speaker':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-400 border border-purple-500/30 tracking-wide">
+            <Radio className="w-3 h-3 text-purple-400 shrink-0" />
+            TOP SPEAKER
+          </span>
+        );
+      case 'official_partner':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 tracking-wide">
+            <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
+            PARTNER OFICIAL
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
   const radiusClass = getRadiusClass(card.border_radius);
 
   // ============================================================================
@@ -211,10 +320,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
     return (
       <div
         className={`relative overflow-hidden bg-slate-800 shrink-0 border-2 ${radiusClass} ${extraClass}`}
-        style={{
-          borderColor: card.primary_color,
-          boxShadow: `0 0 20px ${card.primary_color}40`,
-        }}
+        style={getAvatarEffectStyle()}
       >
         <img
           src={avatarUrl}
@@ -237,7 +343,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
         className={`w-full max-w-md mx-auto min-h-screen text-slate-100 flex flex-col justify-between ${getFontFamilyStyle()} ${
           isSimulator ? 'min-h-0' : ''
         }`}
-        style={{ backgroundColor: bgContainer }}
+        style={{ backgroundColor: bgContainer, ...getTextureStyle() }}
       >
         <div className="p-4 sm:p-6">
           {/* Main Card Container */}
@@ -282,10 +388,13 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
                 />
               </div>
 
-              <div className="flex-1 min-w-0 space-y-0.5">
-                <h1 className="text-base sm:text-lg font-bold text-white tracking-normal leading-snug break-normal">
-                  {card.full_name}
-                </h1>
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-base sm:text-lg font-bold text-white tracking-normal leading-snug break-normal">
+                    {card.full_name}
+                  </h1>
+                  {renderCardBadge()}
+                </div>
                 {card.job_title && (
                   <p
                     className="text-xs sm:text-sm font-bold tracking-tight leading-snug break-normal"
@@ -400,7 +509,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
         className={`w-full max-w-md mx-auto min-h-screen text-slate-100 flex flex-col justify-between ${getFontFamilyStyle()} ${
           isSimulator ? 'min-h-0' : ''
         }`}
-        style={{ backgroundColor: card.background_color || '#0F172A' }}
+        style={{ backgroundColor: card.background_color || '#0F172A', ...getTextureStyle() }}
       >
         <div className="p-6">
           {/* Gafete / Card Container */}
@@ -439,9 +548,12 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
                   <Fingerprint className="w-3 h-3" />
                   <span>NFC SECURE ID</span>
                 </div>
-                <h1 className="text-lg font-black text-white truncate">
-                  {card.full_name}
-                </h1>
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <h1 className="text-lg font-black text-white truncate">
+                    {card.full_name}
+                  </h1>
+                  {renderCardBadge()}
+                </div>
                 <p
                   style={{ color: card.primary_color }}
                   className="text-xs font-semibold truncate"
@@ -531,7 +643,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
         className={`w-full max-w-md mx-auto min-h-screen text-slate-100 flex flex-col justify-between ${getFontFamilyStyle()} ${
           isSimulator ? 'min-h-0' : ''
         }`}
-        style={{ backgroundColor: card.background_color || '#0F172A' }}
+        style={{ backgroundColor: card.background_color || '#0F172A', ...getTextureStyle() }}
       >
         <div className="w-full">
           {/* Panoramic Cover */}
@@ -592,9 +704,12 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
             </div>
 
             <div className="space-y-1 mb-5">
-              <h1 className={`text-2xl font-black text-white ${getFontWeightStyle()}`}>
-                {card.full_name}
-              </h1>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className={`text-2xl font-black text-white ${getFontWeightStyle()}`}>
+                  {card.full_name}
+                </h1>
+                {renderCardBadge()}
+              </div>
               {card.job_title && (
                 <p className="text-xs text-slate-300 font-medium">
                   {card.job_title}
@@ -684,7 +799,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
         className={`w-full max-w-md mx-auto min-h-screen text-slate-100 flex flex-col justify-between ${getFontFamilyStyle()} ${
           isSimulator ? 'min-h-0' : ''
         }`}
-        style={{ backgroundColor: card.background_color || '#18181B' }}
+        style={{ backgroundColor: card.background_color || '#18181B', ...getTextureStyle() }}
       >
         <div className="p-6">
           {/* Header Bar */}
@@ -709,9 +824,12 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
           >
             {renderAvatar('w-20 h-20')}
             <div className="min-w-0">
-              <h1 className={`text-lg font-black text-white truncate ${getFontWeightStyle()}`}>
-                {card.full_name}
-              </h1>
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <h1 className={`text-lg font-black text-white truncate ${getFontWeightStyle()}`}>
+                  {card.full_name}
+                </h1>
+                {renderCardBadge()}
+              </div>
               <p className="text-xs text-slate-300 truncate">{card.job_title}</p>
               <span
                 style={{ backgroundColor: card.primary_color }}
@@ -793,7 +911,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
         className={`w-full max-w-md mx-auto min-h-screen text-stone-200 flex flex-col justify-between ${getFontFamilyStyle()} ${
           isSimulator ? 'min-h-0' : ''
         }`}
-        style={{ backgroundColor: card.background_color || '#18181B' }}
+        style={{ backgroundColor: card.background_color || '#18181B', ...getTextureStyle() }}
       >
         <div className="w-full px-6 pt-8 pb-6">
           {/* Header Superior */}
@@ -821,9 +939,12 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
           {/* Retrato Ejecutivo */}
           <div className="flex flex-col items-center text-center mb-6">
             {renderAvatar('w-32 h-32 mb-4')}
-            <h1 className={`text-2xl font-serif text-stone-100 mb-1 ${getFontWeightStyle()}`}>
-              {card.full_name}
-            </h1>
+            <div className="flex items-center justify-center gap-2 flex-wrap mb-1">
+              <h1 className={`text-2xl font-serif text-stone-100 ${getFontWeightStyle()}`}>
+                {card.full_name}
+              </h1>
+              {renderCardBadge()}
+            </div>
             {card.job_title && (
               <p
                 style={{ color: card.primary_color }}
@@ -920,7 +1041,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
         className={`w-full max-w-md mx-auto min-h-screen text-slate-800 flex flex-col justify-between ${getFontFamilyStyle()} ${
           isSimulator ? 'min-h-0' : ''
         }`}
-        style={{ backgroundColor: card.background_color || '#FAFAFA' }}
+        style={{ backgroundColor: card.background_color || '#FAFAFA', ...getTextureStyle() }}
       >
         <div className="w-full px-6 pt-10 pb-6">
           <div className="flex items-center justify-between mb-8">
@@ -934,9 +1055,12 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
           </div>
 
           <div className="mb-6">
-            <h1 className={`text-2xl font-bold tracking-tight text-slate-900 mb-1 ${getFontWeightStyle()}`}>
-              {card.full_name}
-            </h1>
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h1 className={`text-2xl font-bold tracking-tight text-slate-900 ${getFontWeightStyle()}`}>
+                {card.full_name}
+              </h1>
+              {renderCardBadge()}
+            </div>
             {card.job_title && (
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-0.5">
                 {card.job_title}
@@ -1014,7 +1138,7 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
       className={`w-full max-w-md mx-auto min-h-screen text-slate-100 flex flex-col justify-between ${getFontFamilyStyle()} ${
         isSimulator ? 'min-h-0' : ''
       }`}
-      style={{ backgroundColor: card.background_color || '#0F172A' }}
+      style={{ backgroundColor: card.background_color || '#0F172A', ...getTextureStyle() }}
     >
       <div className="w-full">
         {/* Cover */}
@@ -1059,11 +1183,12 @@ export const DigitalCard: React.FC<DigitalCardProps> = ({
           </div>
 
           <div className="space-y-1 mb-5">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className={`text-xl font-bold text-white tracking-tight ${getFontWeightStyle()}`}>
                 {card.full_name}
               </h1>
               <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0 fill-sky-400/20" />
+              {renderCardBadge()}
             </div>
 
             {card.job_title && (

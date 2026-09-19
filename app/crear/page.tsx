@@ -139,6 +139,10 @@ export default function CrearTarjetaPage() {
     font_weight: activeTemplate.font_weight,
     border_radius: customRadius || activeTemplate.border_radius,
 
+    background_texture: activeTemplate.background_texture || 'none',
+    avatar_effect: activeTemplate.avatar_effect || 'none',
+    card_badge: activeTemplate.card_badge || 'none',
+
     include_photo: true,
     custom_vcf_notes: 'Tarjeta generada con ProConnect',
     enable_crm_capture: enableCrm,

@@ -105,12 +105,39 @@ export const DesignCustomizer: React.FC<DesignCustomizerProps> = ({
     { id: 'full', label: 'Píldora (Full)' },
   ];
 
+  const textures: { id: any; label: string }[] = [
+    { id: 'none', label: 'Sin textura' },
+    { id: 'dots', label: 'Puntos (Dots)' },
+    { id: 'grid', label: 'Cuadrícula (Grid)' },
+    { id: 'carbon', label: 'Fibra de Carbono' },
+    { id: 'subtle_noise', label: 'Ruido Sutil' },
+    { id: 'mesh_gradient', label: 'Mesh Neón Glow' },
+  ];
+
+  const avatarEffects: { id: any; label: string }[] = [
+    { id: 'none', label: 'Borde Sencillo' },
+    { id: 'glow_primary', label: 'Halo Primario (Glow)' },
+    { id: 'glow_accent', label: 'Halo Neón Eléctrico' },
+    { id: 'metallic_ring', label: 'Anillo Metálico Dorado' },
+    { id: 'glass_border', label: 'Borde Cristal (Glass)' },
+  ];
+
+  const cardBadges: { id: any; label: string }[] = [
+    { id: 'none', label: 'Sin Insignia' },
+    { id: 'verified_pro', label: 'PRO Verificado' },
+    { id: 'vip_executive', label: 'VIP Executive' },
+    { id: 'top_speaker', label: 'Top Speaker' },
+    { id: 'official_partner', label: 'Partner Oficial' },
+  ];
+
   const fonts = [
     { id: 'Inter', name: 'Inter (Sans-Serif Moderna)' },
     { id: 'Poppins', name: 'Poppins (Geométrica & Amigable)' },
     { id: 'Roboto', name: 'Roboto (Técnico & Neutro)' },
     { id: 'Playfair Display', name: 'Playfair Display (Serif Elegante)' },
     { id: 'Montserrat', name: 'Montserrat (Impacto Visual)' },
+    { id: 'Cinzel', name: 'Cinzel (Serif Imperial Clásica)' },
+    { id: 'Syne', name: 'Syne (Moderna & Vanguardista)' },
   ];
 
   const fontWeights: { id: FontWeight; label: string }[] = [
@@ -123,7 +150,6 @@ export const DesignCustomizer: React.FC<DesignCustomizerProps> = ({
   // Aplicar plantilla prediseñada en 1-clic
   const applyPresetTemplate = (preset: PresetTemplate) => {
     if (brandLock.isLocked) {
-      // Si la marca corporativa está bloqueada, conservar los colores corporativos
       onChange({
         layout_type: preset.layout_type,
         avatar_position: preset.avatar_position,
@@ -131,6 +157,9 @@ export const DesignCustomizer: React.FC<DesignCustomizerProps> = ({
         border_radius: preset.border_radius,
         font_family: preset.font_family,
         font_weight: preset.font_weight,
+        background_texture: preset.background_texture || 'none',
+        avatar_effect: preset.avatar_effect || 'none',
+        card_badge: preset.card_badge || 'none',
       });
     } else {
       onChange({
@@ -144,6 +173,9 @@ export const DesignCustomizer: React.FC<DesignCustomizerProps> = ({
         background_color: preset.colors.background,
         font_family: preset.font_family,
         font_weight: preset.font_weight,
+        background_texture: preset.background_texture || 'none',
+        avatar_effect: preset.avatar_effect || 'none',
+        card_badge: preset.card_badge || 'none',
       });
     }
   };
@@ -165,12 +197,12 @@ export const DesignCustomizer: React.FC<DesignCustomizerProps> = ({
         </div>
       )}
 
-      {/* 1. Galería de 8 Plantillas Prediseñadas en 1-Clic */}
+      {/* 1. Galería de Plantillas Prediseñadas en 1-Clic */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
             <Sparkles className="w-4 h-4 text-amber-400" />
-            Galería de Plantillas en 1-Clic (8 Estilos)
+            Galería de Plantillas Prémium ({PRESET_TEMPLATES.length} Estilos)
           </label>
         </div>
 
@@ -320,6 +352,87 @@ export const DesignCustomizer: React.FC<DesignCustomizerProps> = ({
                 }`}
               >
                 {radius.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Textura de Fondo Avanzada */}
+      <div>
+        <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5 uppercase tracking-wider">
+          <Sparkles className="w-3.5 h-3.5 text-sky-500" />
+          Textura de Fondo (Background Texture)
+        </label>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {textures.map((tex) => {
+            const isSelected = (card.background_texture || 'none') === tex.id;
+            return (
+              <button
+                key={tex.id}
+                type="button"
+                onClick={() => onChange({ background_texture: tex.id })}
+                className={`py-2 px-3 rounded-xl border text-xs font-medium text-center transition-colors ${
+                  isSelected
+                    ? 'border-sky-500 bg-sky-500/10 text-sky-500 font-bold'
+                    : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {tex.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Efecto de Halo / Borde del Avatar */}
+      <div>
+        <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5 uppercase tracking-wider">
+          <Circle className="w-3.5 h-3.5 text-sky-500" />
+          Efecto de Halo del Avatar (Glow / Ring)
+        </label>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {avatarEffects.map((effect) => {
+            const isSelected = (card.avatar_effect || 'none') === effect.id;
+            return (
+              <button
+                key={effect.id}
+                type="button"
+                onClick={() => onChange({ avatar_effect: effect.id })}
+                className={`py-2 px-3 rounded-xl border text-xs font-medium text-center transition-colors ${
+                  isSelected
+                    ? 'border-sky-500 bg-sky-500/10 text-sky-500 font-bold'
+                    : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {effect.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Insignia de Verificación de Perfil */}
+      <div>
+        <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5 uppercase tracking-wider">
+          <Shield className="w-3.5 h-3.5 text-sky-500" />
+          Insignia de Reconocimiento (Badge)
+        </label>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {cardBadges.map((badge) => {
+            const isSelected = (card.card_badge || 'none') === badge.id;
+            return (
+              <button
+                key={badge.id}
+                type="button"
+                onClick={() => onChange({ card_badge: badge.id })}
+                className={`py-2 px-3 rounded-xl border text-xs font-medium text-center transition-colors ${
+                  isSelected
+                    ? 'border-sky-500 bg-sky-500/10 text-sky-500 font-bold'
+                    : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {badge.label}
               </button>
             );
           })}

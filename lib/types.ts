@@ -126,11 +126,20 @@ export interface Card {
   // Opciones avanzadas y complementos (CRM, Lead Capture)
   enable_crm_capture?: boolean;
 
+  // Nuevos estilos prémium y personalización avanzada
+  background_texture?: BackgroundTexture;
+  avatar_effect?: AvatarEffect;
+  card_badge?: CardBadge;
+
   created_at: string;
   updated_at?: string;
   expires_at?: string | null;
   plan_duration?: 'monthly' | 'annual' | 'lifetime' | 'custom';
 }
+
+export type BackgroundTexture = 'none' | 'dots' | 'grid' | 'carbon' | 'subtle_noise' | 'mesh_gradient';
+export type AvatarEffect = 'none' | 'glow_primary' | 'glow_accent' | 'metallic_ring' | 'glass_border';
+export type CardBadge = 'none' | 'verified_pro' | 'vip_executive' | 'top_speaker' | 'official_partner';
 
 export interface CardLink {
   id: string;
@@ -220,19 +229,23 @@ export interface PresetTemplate {
   colors: BrandColors;
   font_family: string;
   font_weight: FontWeight;
+  background_texture?: BackgroundTexture;
+  avatar_effect?: AvatarEffect;
+  card_badge?: CardBadge;
 }
 
-// ????????????????????????????????????????????????????
-// M�DULO PROCONNECT GASTRO � MESAS INTELIGENTES
-// ????????????????????????????????????????????????????
+// ====================================================
+// MÓDULO PROCONNECT GASTRO — MESAS INTELIGENTES
+// ====================================================
 
 export interface RestaurantTable {
   id: string;
   organization_id: string;
   table_number: number;
-  slug: string;        // p.e. "pollos-mario"  ? /r/pollos-mario?mesa=3
+  slug: string;        // p.e. "brasa-criolla"  -> /r/brasa-criolla?mesa=3
   name: string;        // "Mesa 3", "Terraza 1", "VIP 2"
   capacity: number;
+  assigned_waiter?: string | null;
   is_active: boolean;
   created_at: string;
 }
@@ -240,8 +253,8 @@ export interface RestaurantTable {
 export interface MenuCategory {
   id: string;
   organization_id: string;
-  name: string;        // "Entradas", "Platos Fuertes", "Bebidas", "Postres"
-  icon: string;        // emoji: "??", "??", "??"
+  name: string;        // "Entradas", "Platos Fuertes", "Combos", "Bebidas", "Postres"
+  icon: string;        // emoji: "🥗", "🍗", "🔥"
   position_order: number;
 }
 
@@ -257,6 +270,7 @@ export interface MenuItem {
   image_url: string | null;
   status: MenuItemStatus;
   is_featured: boolean;
+  badge?: 'mas_vendido' | 'chef_recommend' | 'combo_familiar' | 'nuevo' | null;
   position_order: number;
 }
 
@@ -289,6 +303,7 @@ export interface PaymentData {
   reference: string | null;
   receipt_base64: string | null;  // comprobante subido por el cliente
   confirmed_at: string | null;
+  status?: 'pending_approval' | 'approved' | 'rejected';
 }
 
 export interface TableOrder {
@@ -302,12 +317,18 @@ export interface TableOrder {
   total: number;
   payment_data: PaymentData | null;
   waiter_called: boolean;
+  waiter_call_reason?: string | null;
   bill_requested: boolean;
+  tip_amount?: number;
+  assigned_waiter?: string | null;
+  prep_started_at?: string | null;
+  delivered_at?: string | null;
+  paid_at?: string | null;
   created_at: string;
   updated_at: string;
 }
 
-// Info de pago de la organizaci�n restaurante
+// Info de pago de la organización restaurante
 export interface RestaurantPaymentInfo {
   pago_movil_phone: string | null;
   pago_movil_bank: string | null;
@@ -317,4 +338,14 @@ export interface RestaurantPaymentInfo {
   bank_name: string | null;
   bank_account: string | null;
   bank_holder: string | null;
+}
+
+export interface RestaurantKPIs {
+  totalRevenue: number;
+  totalOrders: number;
+  averageTicket: number;
+  activeTablesCount: number;
+  topSellingItems: { name: string; qty: number; revenue: number }[];
+  lowSellingItems: { name: string; qty: number; revenue: number }[];
+  avgPreparationMinutes: number;
 }
