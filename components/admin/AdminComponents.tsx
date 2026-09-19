@@ -28,6 +28,7 @@ import {
   CalendarPlus,
   Clock,
   AlertTriangle,
+  AlertCircle,
 } from 'lucide-react';
 import { getCardExpirationInfo } from '@/lib/card-lifecycle';
 
@@ -635,12 +636,16 @@ export const CardManagementTable: React.FC<CardTableProps> = ({
 interface UserTableProps {
   users: User[];
   onRoleChange: (userId: string, role: UserRole) => void;
+  onDeleteUser?: (userId: string) => void;
 }
 
 export const UserManagementTable: React.FC<UserTableProps> = ({
   users,
   onRoleChange,
+  onDeleteUser,
 }) => {
+  const [userToDelete, setUserToDelete] = React.useState<User | null>(null);
+
   return (
     <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
       <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -649,7 +654,7 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
             Usuarios del Sistema
           </h3>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Gestión de roles de acceso (Administrador o Cliente).
+            Gestión de roles de acceso y eliminación de cuentas.
           </p>
         </div>
         <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
@@ -665,7 +670,7 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
               <th className="px-5 py-3.5">Email</th>
               <th className="px-5 py-3.5">Fecha de Registro</th>
               <th className="px-5 py-3.5">Rol Actual</th>
-              <th className="px-5 py-3.5 text-right">Modificar Rol</th>
+              <th className="px-5 py-3.5 text-right">Rol y Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -706,23 +711,78 @@ export const UserManagementTable: React.FC<UserTableProps> = ({
                   </span>
                 </td>
                 <td className="px-5 py-3.5 text-right">
-                  <select
-                    value={user.role}
-                    onChange={(e) =>
-                      onRoleChange(user.id, e.target.value as UserRole)
-                    }
-                    className="px-2.5 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
-                  >
-                    <option value="client">Cliente</option>
-                    <option value="org_admin">Admin Org.</option>
-                    <option value="superadmin">Superadmin</option>
-                  </select>
+                  <div className="flex items-center justify-end gap-2">
+                    <select
+                      value={user.role}
+                      onChange={(e) =>
+                        onRoleChange(user.id, e.target.value as UserRole)
+                      }
+                      className="px-2.5 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                    >
+                      <option value="client">Cliente</option>
+                      <option value="org_admin">Admin Org.</option>
+                      <option value="superadmin">Superadmin</option>
+                    </select>
+
+                    {onDeleteUser && (
+                      <button
+                        type="button"
+                        onClick={() => setUserToDelete(user)}
+                        title="Eliminar usuario"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* Modal de Confirmación para Eliminar Usuario */}
+      {userToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 dark:bg-red-950/60 text-red-600 flex items-center justify-center mx-auto">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-1.5">
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">
+                ¿Eliminar este usuario?
+              </h4>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Se eliminará permanentemente la cuenta de{' '}
+                <strong className="text-slate-900 dark:text-white font-mono">
+                  {userToDelete.email}
+                </strong>{' '}
+                ({userToDelete.full_name || 'Sin nombre'}) y todas las tarjetas asociadas.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setUserToDelete(null)}
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteUser) onDeleteUser(userToDelete.id);
+                  setUserToDelete(null);
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-md shadow-red-600/20 transition-colors"
+              >
+                Sí, Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

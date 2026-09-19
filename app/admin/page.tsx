@@ -181,6 +181,26 @@ export default function SuperadminPage() {
     loadData();
   };
 
+  const handleDeleteUser = async (userId: string) => {
+    // 1. Filtrar localmente
+    setUsers((prev) => prev.filter((u) => u.id !== userId));
+    const userCards = cards.filter((c) => c.user_id === userId);
+    setCards((prev) => prev.filter((c) => c.user_id !== userId));
+    userCards.forEach((c) => deleteCard(c.id));
+
+    // 2. Eliminar de Supabase si está disponible
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase.from('cards').delete().eq('user_id', userId);
+        await supabase.from('users').delete().eq('id', userId);
+      } catch (err) {
+        console.warn('Error eliminando usuario de Supabase:', err);
+      }
+    }
+
+    loadData();
+  };
+
   const handleToggleOrgSubscription = (orgId: string) => {
     toggleOrganizationSubscription(orgId);
     loadData();
@@ -298,6 +318,7 @@ export default function SuperadminPage() {
           <UserManagementTable
             users={users}
             onRoleChange={handleUserRoleChange}
+            onDeleteUser={handleDeleteUser}
           />
         </section>
       </main>

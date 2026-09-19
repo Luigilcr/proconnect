@@ -59,17 +59,17 @@ import {
 export default function CrearTarjetaPage() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // Datos del Paso 1
-  const [fullName, setFullName] = useState('Alejandro Salazar');
-  const [jobTitle, setJobTitle] = useState('Director Comercial | B2B');
-  const [companyName, setCompanyName] = useState('ProConnect Enterprise');
-  const [phoneNumber, setPhoneNumber] = useState('+58 412 555 1234');
-  const [email, setEmail] = useState('contacto@proconnect.app');
-  const [website, setWebsite] = useState('https://proconnect.app');
-  const [instagram, setInstagram] = useState('@proconnect.app');
-  const [linkedin, setLinkedin] = useState('proconnect-saas');
+  // Datos del Paso 1 (Vacíos por defecto con placeholders explicativos)
+  const [fullName, setFullName] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [email, setEmail] = useState('');
+  const [website, setWebsite] = useState('');
+  const [instagram, setInstagram] = useState('');
+  const [linkedin, setLinkedin] = useState('');
   const [tiktok, setTiktok] = useState('');
-  const [bio, setBio] = useState('Somos tu aliado estratégico en conectividad inteligente y transformación digital.');
+  const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400');
   const [coverUrl, setCoverUrl] = useState('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -129,7 +129,7 @@ export default function CrearTarjetaPage() {
   };
 
   // Slug generado
-  const slug = fullName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-');
+  const slug = (fullName.trim() || 'mi-tarjeta').toLowerCase().replace(/[^a-z0-9]+/g, '-');
   const publicUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/c/${slug}`
     : `https://proconnect.app/c/${slug}`;
@@ -428,11 +428,11 @@ export default function CrearTarjetaPage() {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
             setCurrentUser(session.user);
-            if (session.user.user_metadata?.full_name && fullName === 'Alejandro Salazar') {
-              setFullName(session.user.user_metadata.full_name);
+            if (session.user.user_metadata?.full_name) {
+              setFullName((prev) => prev || session.user.user_metadata.full_name || '');
             }
-            if (session.user.email && email === 'contacto@proconnect.app') {
-              setEmail(session.user.email);
+            if (session.user.email) {
+              setEmail((prev) => prev || session.user.email || '');
             }
           }
         } catch (e) {
@@ -447,11 +447,11 @@ export default function CrearTarjetaPage() {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user) {
           setCurrentUser(session.user);
-          if (session.user.user_metadata?.full_name && fullName === 'Alejandro Salazar') {
-            setFullName(session.user.user_metadata.full_name);
+          if (session.user.user_metadata?.full_name) {
+            setFullName((prev) => prev || session.user.user_metadata.full_name || '');
           }
-          if (session.user.email && email === 'contacto@proconnect.app') {
-            setEmail(session.user.email);
+          if (session.user.email) {
+            setEmail((prev) => prev || session.user.email || '');
           }
         } else {
           setCurrentUser(null);
@@ -532,16 +532,16 @@ export default function CrearTarjetaPage() {
   const handleDiscardDraft = () => {
     clearCardDraft();
     setDraftRestored(false);
-    setFullName('Alejandro Salazar');
-    setJobTitle('Director Comercial | B2B');
-    setCompanyName('ProConnect Enterprise');
-    setPhoneNumber('+58 412 555 1234');
-    setEmail('contacto@proconnect.app');
-    setWebsite('https://proconnect.app');
-    setInstagram('@proconnect.app');
-    setLinkedin('proconnect-saas');
+    setFullName(currentUser?.user_metadata?.full_name || '');
+    setJobTitle('');
+    setCompanyName('');
+    setPhoneNumber('');
+    setEmail(currentUser?.email || '');
+    setWebsite('');
+    setInstagram('');
+    setLinkedin('');
     setTiktok('');
-    setBio('Somos tu aliado estratégico en conectividad inteligente y transformación digital.');
+    setBio('');
     setAvatarUrl('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400');
     setCoverUrl('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800');
     setLogoUrl(null);

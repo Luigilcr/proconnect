@@ -1851,6 +1851,29 @@ export default function OrgDashboardPage() {
 
                   {/* Campo para redactar nueva nota */}
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0 space-y-2">
+                    {/* Botones de Notas Rápidas */}
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Plantillas rápidas de seguimiento:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          '📞 Llamada telefónica realizada',
+                          '💬 Contactado por WhatsApp',
+                          '📄 Cotización enviada',
+                          '🤝 Demostración agendada',
+                          '⏳ Pendiente de respuesta del cliente',
+                        ].map((tag, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setLeadNoteText((prev) => (prev ? `${prev} • ${tag}` : tag))}
+                            className="px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-[10px] font-semibold hover:bg-amber-100 transition-colors"
+                          >
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     <textarea
                       rows={3}
                       value={leadNoteText}
