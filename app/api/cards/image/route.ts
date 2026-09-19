@@ -17,11 +17,20 @@ export async function GET(request: NextRequest) {
 
   let card: any = null;
 
-  // 1. Consultar vía RPC (bypass seguro de RLS para lectura pública)
+  // 1. Consultar vía RPC o select directo (bypass de RLS para lectura pública de imagen)
   if (isSupabaseEnabled && supabase) {
     try {
       const { data } = await supabase.rpc('get_public_card', { p_slug: slug });
       if (data) card = data;
+
+      if (!card) {
+        const { data: directCard } = await supabase
+          .from('cards')
+          .select('profile_photo_url, cover_photo_url')
+          .ilike('slug', slug)
+          .maybeSingle();
+        if (directCard) card = directCard;
+      }
     } catch (e) {
       console.warn('Error fetching card in /api/cards/image:', e);
     }

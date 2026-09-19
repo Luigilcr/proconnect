@@ -157,3 +157,38 @@ export function normalizeCardForDatabase(
     user_email: userEmail || rawCard.user_email || rawCard.email || null,
   } as FullCard;
 }
+
+/**
+ * Retorna únicamente los campos existentes en la tabla public.cards de Supabase,
+ * evitando errores de 'column does not exist' como expires_at.
+ */
+export function getSupabaseCardPayload(card: FullCard) {
+  return {
+    id: card.id,
+    user_id: card.user_id,
+    organization_id: isValidUuid(card.organization_id) ? card.organization_id : null,
+    slug: card.slug,
+    is_active: card.is_active ?? true,
+    full_name: card.full_name,
+    job_title: card.job_title || null,
+    company_name: card.company_name || null,
+    bio: card.bio || null,
+    profile_photo_url: card.profile_photo_url || null,
+    cover_photo_url: card.cover_photo_url || null,
+    logo_url: card.logo_url || null,
+    layout_type: card.layout_type,
+    avatar_position: card.avatar_position,
+    button_style: card.button_style,
+    border_radius: card.border_radius,
+    primary_color: card.primary_color,
+    secondary_color: card.secondary_color,
+    accent_color: card.accent_color,
+    background_color: card.background_color,
+    font_family: card.font_family,
+    font_weight: card.font_weight,
+    include_photo: card.include_photo ?? true,
+    custom_vcf_notes: card.custom_vcf_notes || null,
+    enable_crm_capture: card.enable_crm_capture ?? true,
+    updated_at: new Date().toISOString(),
+  };
+}

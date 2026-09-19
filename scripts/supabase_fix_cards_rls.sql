@@ -19,6 +19,9 @@ EXCEPTION
     WHEN undefined_object THEN null;
 END $$;
 
+-- Asegurar existencia de columna expires_at en public.cards si falta
+ALTER TABLE public.cards ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '30 days');
+
 -- 2. ASEGURAR SUPERADMIN SOLO PARA CUENTAS ADMINISTRATIVAS OFICIALES
 UPDATE public.users
 SET role = 'superadmin'::user_role

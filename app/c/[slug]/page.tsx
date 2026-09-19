@@ -19,6 +19,9 @@ interface PageProps {
   };
 }
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 async function getCardForServer(slug: string): Promise<FullCard | null> {
   const cleanSlug = decodeURIComponent(slug || '').toLowerCase().trim();
   if (!cleanSlug) return null;

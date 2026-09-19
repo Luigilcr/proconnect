@@ -151,7 +151,6 @@ export async function POST(request: NextRequest) {
           include_photo: card.include_photo,
           custom_vcf_notes: card.custom_vcf_notes,
           is_active: card.is_active,
-          expires_at: card.expires_at,
           updated_at: new Date().toISOString(),
         });
 

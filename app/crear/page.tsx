@@ -23,7 +23,7 @@ import { saveCardDraft, loadCardDraft, clearCardDraft } from '@/lib/draft-store'
 import { AuthModal } from '@/components/auth/AuthModal';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { compressImage } from '@/lib/image-compressor';
-import { normalizeCardForDatabase, isSuperAdminEmail } from '@/lib/db-normalize';
+import { normalizeCardForDatabase, isSuperAdminEmail, getSupabaseCardPayload } from '@/lib/db-normalize';
 import {
   Sparkles,
   ArrowRight,
@@ -34,6 +34,8 @@ import {
   Share2,
   Copy,
   ExternalLink,
+  MessageCircle,
+  Download,
   Gift,
   Building2,
   Briefcase,
@@ -578,60 +580,27 @@ export default function CrearTarjetaPage() {
     // 2. Sincronizar en Supabase si está disponible
     if (isSupabaseEnabled && supabase) {
       try {
-        // Intento 1: Llamar a la función RPC segura save_public_card con datos normalizados
-        const { data: rpcData, error: rpcError } = await supabase.rpc('save_public_card', {
-          p_card: dbCard,
+        const isSuper = isSuperAdminEmail(user.email);
+        await supabase.from('users').upsert({
+          id: dbCard.user_id,
+          email: user.email || '',
+          full_name: dbCard.full_name,
+          role: isSuper ? 'superadmin' : 'client',
         });
 
-        if (rpcError) {
-          console.warn('RPC save_public_card falló o no está actualizado, reintentando upsert estándar:', rpcError.message);
-          
-          const isSuper = isSuperAdminEmail(user.email);
-          await supabase.from('users').upsert({
-            id: dbCard.user_id,
-            email: user.email || '',
-            full_name: dbCard.full_name,
-            role: isSuper ? 'superadmin' : 'client',
-          });
+        // Upsert directo con columnas normalizadas de public.cards
+        const cardPayload = getSupabaseCardPayload(dbCard);
+        const { error: cardUpsertErr } = await supabase.from('cards').upsert(cardPayload);
 
-          const { error: cardUpsertErr } = await supabase.from('cards').upsert({
-            id: dbCard.id,
-            user_id: dbCard.user_id,
-            organization_id: dbCard.organization_id,
-            slug: dbCard.slug,
-            full_name: dbCard.full_name,
-            job_title: dbCard.job_title,
-            company_name: dbCard.company_name,
-            bio: dbCard.bio,
-            profile_photo_url: dbCard.profile_photo_url,
-            cover_photo_url: dbCard.cover_photo_url,
-            logo_url: dbCard.logo_url,
-            layout_type: dbCard.layout_type,
-            avatar_position: dbCard.avatar_position,
-            button_style: dbCard.button_style,
-            border_radius: dbCard.border_radius,
-            primary_color: dbCard.primary_color,
-            secondary_color: dbCard.secondary_color,
-            accent_color: dbCard.accent_color,
-            background_color: dbCard.background_color,
-            font_family: dbCard.font_family,
-            font_weight: dbCard.font_weight,
-            include_photo: dbCard.include_photo,
-            custom_vcf_notes: dbCard.custom_vcf_notes,
-            is_active: dbCard.is_active,
-            expires_at: dbCard.expires_at,
-            updated_at: new Date().toISOString(),
-          });
+        if (cardUpsertErr) {
+          console.warn('Upsert directo de cards tuvo advertencia, invocando RPC save_public_card:', cardUpsertErr.message);
+          await supabase.rpc('save_public_card', { p_card: dbCard });
+        }
 
-          if (cardUpsertErr) {
-            console.error('Error en upsert directo de cards:', cardUpsertErr);
-          }
-
-          await supabase.from('card_links').delete().eq('card_id', dbCard.id);
-
-          if (Array.isArray(dbCard.links) && dbCard.links.length > 0) {
-            await supabase.from('card_links').insert(dbCard.links);
-          }
+        // Sincronizar card_links
+        await supabase.from('card_links').delete().eq('card_id', dbCard.id);
+        if (Array.isArray(dbCard.links) && dbCard.links.length > 0) {
+          await supabase.from('card_links').insert(dbCard.links);
         }
       } catch (err) {
         console.warn('Error sincronizando tarjeta en Supabase:', err);
@@ -702,6 +671,35 @@ export default function CrearTarjetaPage() {
       setTimeout(() => setCopied(false), 2000);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleDownloadQr = () => {
+    if (typeof window === 'undefined') return;
+    const svg = document.getElementById('proconnect-qr-svg');
+    if (!svg) return;
+    try {
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = 600;
+        canvas.height = 600;
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, 600, 600);
+          ctx.drawImage(img, 50, 50, 500, 500);
+          const pngFile = canvas.toDataURL('image/png');
+          const downloadLink = document.createElement('a');
+          downloadLink.download = `QR-${slug || 'proconnect'}.png`;
+          downloadLink.href = pngFile;
+          downloadLink.click();
+        }
+      };
+      img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+    } catch (err) {
+      console.warn('Error downloading QR:', err);
     }
   };
 
@@ -865,25 +863,43 @@ export default function CrearTarjetaPage() {
                 { num: 1, label: 'Tus Datos' },
                 { num: 2, label: 'Plantilla' },
                 { num: 3, label: '¡Lista!' },
-              ].map((s) => (
-                <div key={s.num} className="flex-1 flex items-center gap-2">
-                  <div
-                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black transition-all ${
-                      step === s.num
-                        ? 'bg-brand-navy text-white shadow-md ring-2 ring-brand-cyan'
-                        : step > s.num
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-200 text-slate-500'
-                    }`}
-                  >
-                    {step > s.num ? <Check className="w-3.5 h-3.5" /> : s.num}
+              ].map((s) => {
+                const isCompleted = step > s.num || (step === 3 && s.num === 3);
+                const isCurrent = step === s.num && !isCompleted;
+                return (
+                  <div key={s.num} className="flex-1 flex items-center gap-2">
+                    <div
+                      className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black transition-all ${
+                        isCompleted
+                          ? 'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-300'
+                          : isCurrent
+                          ? 'bg-brand-navy text-white shadow-md ring-2 ring-brand-cyan'
+                          : 'bg-slate-200 text-slate-500'
+                      }`}
+                    >
+                      {isCompleted ? <Check className="w-3.5 h-3.5 stroke-[2.5]" /> : s.num}
+                    </div>
+                    <span
+                      className={`text-[11px] font-bold hidden sm:inline ${
+                        isCompleted
+                          ? 'text-emerald-700'
+                          : isCurrent
+                          ? 'text-brand-navy'
+                          : 'text-slate-400'
+                      }`}
+                    >
+                      {s.label}
+                    </span>
+                    {s.num < 3 && (
+                      <div
+                        className={`h-0.5 flex-1 transition-all ${
+                          step > s.num || (step === 3 && s.num < 3) ? 'bg-emerald-500' : 'bg-slate-200'
+                        }`}
+                      />
+                    )}
                   </div>
-                  <span className={`text-[11px] font-bold hidden sm:inline ${step === s.num ? 'text-brand-navy' : 'text-slate-400'}`}>
-                    {s.label}
-                  </span>
-                  {s.num < 3 && <div className="h-0.5 flex-1 bg-slate-200" />}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -1727,48 +1743,89 @@ export default function CrearTarjetaPage() {
                     </p>
                   </div>
 
-                  {/* Tarjeta de Acceso y Enlace Público */}
-                  <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-                    <label className="text-xs font-bold text-slate-700">Tu Enlace Dinámico Público</label>
-                    <div className="flex gap-2">
+                  {/* Botones de Acción Inmediata (Móvil y Escritorio) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <a
+                      href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
+                        `¡Hola! Te comparto mi tarjeta de contacto digital ProConnect: ${publicUrl}`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs sm:text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer"
+                    >
+                      <MessageCircle className="w-4 h-4 shrink-0" />
+                      <span>Compartir por WhatsApp</span>
+                    </a>
+
+                    <a
+                      href={publicUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-3.5 px-4 bg-brand-navy hover:bg-slate-800 active:scale-95 text-white font-bold text-xs sm:text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer"
+                    >
+                      <ExternalLink className="w-4 h-4 text-brand-cyan shrink-0" />
+                      <span>Abrir mi Tarjeta en Vivo</span>
+                    </a>
+                  </div>
+
+                  {/* Tarjeta de Acceso y Enlace Dinámico */}
+                  <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-700">Tu Enlace Dinámico Público</label>
+                      <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        Listo para Compartir
+                      </span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
                       <input
                         type="text"
                         readOnly
                         value={publicUrl}
-                        className="flex-1 px-3.5 py-2 text-xs rounded-xl border border-slate-300 bg-white font-mono text-slate-800"
+                        className="flex-1 px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 bg-white font-mono text-slate-800 select-all"
                       />
                       <button
                         type="button"
                         onClick={handleCopyUrl}
-                        className="px-4 py-2 bg-brand-navy hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                        className="w-full sm:w-auto px-5 py-2.5 bg-brand-navy hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-sm active:scale-95"
                       >
                         {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copied ? 'Copiado' : 'Copiar'}</span>
+                        <span>{copied ? '¡Enlace Copiado!' : 'Copiar Enlace'}</span>
                       </button>
                     </div>
                   </div>
 
                   {/* QR Code de Descarga Rápida */}
-                  <div className="p-6 rounded-2xl bg-white border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-5 shadow-sm">
-                    <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm shrink-0">
+                  <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-5 shadow-sm">
+                    <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm shrink-0 flex flex-col items-center">
                       <QRCodeSVG
+                        id="proconnect-qr-svg"
                         value={publicUrl}
-                        size={120}
+                        size={130}
                         fgColor={activeTemplate.colors.primary}
                         level="Q"
                       />
+                      <button
+                        type="button"
+                        onClick={handleDownloadQr}
+                        className="mt-2.5 w-full py-1.5 px-3 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all"
+                      >
+                        <Download className="w-3 h-3 text-slate-600" />
+                        <span>Descargar PNG</span>
+                      </button>
                     </div>
-                    <div className="space-y-2 text-center sm:text-left flex-1">
-                      <h3 className="text-sm font-bold text-brand-navy">Código QR Listo para Escanear</h3>
-                      <p className="text-xs text-slate-500">
-                        Cualquier persona que apunte su cámara a este código guardará tu contacto en 1 segundo.
-                      </p>
-                      <div className="flex flex-wrap gap-2 pt-1">
+                    <div className="space-y-3 text-center sm:text-left flex-1">
+                      <div>
+                        <h3 className="text-sm font-bold text-brand-navy">Código QR para Compartir Contacto</h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Cualquier persona que apunte la cámara de su teléfono escaneará tu perfil y guardará tus datos de inmediato.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 pt-1 justify-center sm:justify-start">
                         <Link
                           href="/dashboard"
-                          className="px-4 py-2 bg-brand-cyan text-brand-navy font-bold text-xs rounded-xl hover:bg-sky-300 transition-colors"
+                          className="px-4 py-2 bg-brand-cyan text-brand-navy font-bold text-xs rounded-xl hover:bg-sky-300 transition-colors shadow-sm"
                         >
-                          Ir al Panel de Edición Completo
+                          Ir a mi Panel de Control
                         </Link>
                         <Link
                           href="/nfc-studio"
@@ -1784,10 +1841,10 @@ export default function CrearTarjetaPage() {
                     <button
                       type="button"
                       onClick={() => setStep(2)}
-                      className="text-xs font-bold text-slate-500 hover:text-slate-900 flex items-center gap-1"
+                      className="text-xs font-bold text-slate-500 hover:text-slate-900 flex items-center gap-1 transition-colors"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" />
-                      <span>Cambiar de plantilla</span>
+                      <span>Volver y cambiar plantilla o datos</span>
                     </button>
                   </div>
                 </div>
