@@ -412,6 +412,30 @@ export default function CrearTarjetaPage() {
     }
   };
 
+  const handleResetForm = () => {
+    clearCardDraft();
+    setFullName('');
+    setJobTitle('');
+    setCompanyName('');
+    setPhoneNumber('');
+    setEmail(currentUser?.email || '');
+    setWebsite('');
+    setInstagram('');
+    setLinkedin('');
+    setTiktok('');
+    setBio('');
+    setAvatarUrl('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400');
+    setCoverUrl('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800');
+    setLogoUrl(null);
+    setMultimedia([]);
+    setSelectedTemplateId('crimson_quote');
+    setStep(1);
+    setDraftRestored(false);
+    setLastSavedTime(null);
+    setResetToast(true);
+    setTimeout(() => setResetToast(false), 3500);
+  };
+
   // Restaurar borrador temporal si existe al cargar la página
   useEffect(() => {
     const draft = loadCardDraft();
@@ -454,9 +478,15 @@ export default function CrearTarjetaPage() {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
-            setCurrentUser(session.user);
-            if (session.user.email) {
-              setEmail((prev) => prev || session.user.email || '');
+            const user = session.user;
+            setCurrentUser(user);
+            const userEmail = (user.email || '').toLowerCase().trim();
+            const draft = loadCardDraft();
+            // Si el borrador existente pertenecía a otra cuenta distinta, resetear para evitar filtrar datos
+            if (draft && draft.meta?.userEmail && userEmail && draft.meta.userEmail.toLowerCase().trim() !== userEmail) {
+              handleResetForm();
+            } else if (user.email) {
+              setEmail((prev) => prev || user.email || '');
             }
           }
         } catch (e) {
@@ -470,9 +500,14 @@ export default function CrearTarjetaPage() {
     if (isSupabaseEnabled && supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user) {
-          setCurrentUser(session.user);
-          if (session.user.email) {
-            setEmail((prev) => prev || session.user.email || '');
+          const user = session.user;
+          setCurrentUser(user);
+          const userEmail = (user.email || '').toLowerCase().trim();
+          const draft = loadCardDraft();
+          if (draft && draft.meta?.userEmail && userEmail && draft.meta.userEmail.toLowerCase().trim() !== userEmail) {
+            handleResetForm();
+          } else if (user.email) {
+            setEmail((prev) => prev || user.email || '');
           }
         } else {
           setCurrentUser(null);
@@ -481,26 +516,6 @@ export default function CrearTarjetaPage() {
       return () => subscription.unsubscribe();
     }
   }, []);
-
-  const handleResetForm = () => {
-    clearCardDraft();
-    setFullName('');
-    setJobTitle('');
-    setCompanyName('');
-    setPhoneNumber('');
-    setEmail(currentUser?.email || '');
-    setWebsite('');
-    setInstagram('');
-    setLinkedin('');
-    setTiktok('');
-    setBio('');
-    setLogoUrl(null);
-    setMultimedia([]);
-    setDraftRestored(false);
-    setLastSavedTime(null);
-    setResetToast(true);
-    setTimeout(() => setResetToast(false), 3500);
-  };
 
   const handleCheckEmailConfirmed = async () => {
     if (!isSupabaseEnabled || !supabase) return;
@@ -598,6 +613,8 @@ export default function CrearTarjetaPage() {
         tiktok,
         selectedTemplateId,
         step,
+        userEmail: currentUser?.email || email || '',
+        userId: currentUser?.id || '',
       });
       const now = new Date();
       setLastSavedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));

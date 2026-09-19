@@ -32,6 +32,7 @@ import {
   updateLeadStatus,
   addLeadActivityNote,
   deleteLead,
+  updateUserRole,
 } from '@/lib/data/card-store';
 import {
   getRestaurantTables,
@@ -811,6 +812,26 @@ Carlos Mendoza,Ejecutivo Senior,carlos@empresa.com,+34633445566,Ventas`;
     }
     toggleCardActiveStatus(cardId);
     await loadOrgData();
+  };
+
+  // Asignar rol a colaborador (org_admin vs collaborator)
+  const handleAssignRole = async (card: FullCard, newRole: string) => {
+    if (!isOrgAdmin) {
+      alert('Solo los administradores de la empresa pueden modificar roles y permisos.');
+      return;
+    }
+    const roleVal = newRole as any;
+    if (card.user_id) {
+      updateUserRole(card.user_id, roleVal);
+      if (isSupabaseEnabled && supabase) {
+        try {
+          await supabase.from('users').update({ role: roleVal }).eq('id', card.user_id);
+        } catch (err) {
+          console.warn('Error al actualizar rol en Supabase:', err);
+        }
+      }
+    }
+    alert(`Permisos actualizados: ${card.full_name} ahora tiene rol de ${newRole === 'org_admin' ? 'Administrador de Empresa (Control total)' : 'Vendedor / Asesor comercial'}.`);
   };
 
   // Crear Organización
@@ -1724,11 +1745,8 @@ Carlos Mendoza,Ejecutivo Senior,carlos@empresa.com,+34633445566,Ventas`;
                           {isOrgAdmin ? (
                             <select
                               defaultValue="collaborator"
-                              className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
-                              onChange={(e) => {
-                                const newRole = e.target.value;
-                                alert(`Permisos guardados: ${card.full_name} ahora tiene rol de ${newRole === 'org_admin' ? 'Administrador de Empresa (Control total)' : 'Vendedor / Asesor (Sin permisos de eliminación)'}.`);
-                              }}
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer hover:border-purple-500 transition-colors"
+                              onChange={(e) => handleAssignRole(card, e.target.value)}
                             >
                               <option value="collaborator">💼 Vendedor / Asesor</option>
                               <option value="org_admin">👑 Administrador Empresa</option>

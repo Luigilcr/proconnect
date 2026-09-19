@@ -78,6 +78,9 @@ export const Navbar: React.FC = () => {
           <Link href="/pricing" className="hover:text-brand-cyan transition-colors text-slate-500">
             Planes
           </Link>
+          <Link href="/crear-empresa" className="hover:text-purple-600 transition-colors flex items-center gap-1 font-bold text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 px-2.5 py-1 rounded-lg border border-purple-200 dark:border-purple-800">
+            <span>🏢 Empresas B2B</span>
+          </Link>
         </nav>
 
         {/* ── Right Side Action ── */}
@@ -138,6 +141,7 @@ export const Navbar: React.FC = () => {
           {[
             { href: '/#features', label: 'Características', icon: '✨' },
             { href: '/nfc-studio', label: 'Tarjetas Físicas NFC', icon: '💳' },
+            { href: '/crear-empresa', label: 'Empresas B2B (Crear Cuenta)', icon: '🏢' },
             { href: '/r/brasa-criolla?mesa=1', label: 'Demo Restaurante (Gastro)', icon: '🍽️' },
             { href: '/c/carlos-fibraconnect', label: 'Demo Asesor FibraConnect (B2B)', icon: '💼' },
           ].map(({ href, label, icon }) => (

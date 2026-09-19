@@ -69,8 +69,8 @@ export default function PricingPage() {
       priceAnnual: 39, // $39/mo for 5 members
       description: 'Control centralizado, gestión de fuerza de ventas y nutrición automática de prospectos en tu CRM.',
       popular: true,
-      ctaText: 'Solicitar Demostración B2B',
-      ctaHref: '/org-dashboard',
+      ctaText: 'Contratar Plan Empresa',
+      ctaHref: '/crear-empresa?plan=corporativo',
       features: [
         'Desde 5 hasta 500+ Tarjetas para empleados',
         'Panel Superadmin y Org-Admin centralizado',
