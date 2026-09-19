@@ -89,6 +89,9 @@ export default function CrearTarjetaPage() {
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [enableCrm, setEnableCrm] = useState<boolean>(true);
   const [mobileStep2Tab, setMobileStep2Tab] = useState<'simulator' | 'catalog'>('simulator');
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [guestMode, setGuestMode] = useState<boolean>(false);
 
   // Estados de Persistencia Temporal (Auto-Save) y Product-Led Auth
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -417,6 +420,72 @@ export default function CrearTarjetaPage() {
     }
   }, []);
 
+  // Verificar sesión activa en Supabase al cargar la página
+  useEffect(() => {
+    const checkSession = async () => {
+      if (isSupabaseEnabled && supabase) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user) {
+            setCurrentUser(session.user);
+            if (session.user.user_metadata?.full_name && fullName === 'Alejandro Salazar') {
+              setFullName(session.user.user_metadata.full_name);
+            }
+            if (session.user.email && email === 'contacto@proconnect.app') {
+              setEmail(session.user.email);
+            }
+          }
+        } catch (e) {
+          console.warn('Error en checkSession /crear:', e);
+        }
+      }
+      setAuthChecking(false);
+    };
+    checkSession();
+
+    if (isSupabaseEnabled && supabase) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+          setCurrentUser(session.user);
+          if (session.user.user_metadata?.full_name && fullName === 'Alejandro Salazar') {
+            setFullName(session.user.user_metadata.full_name);
+          }
+          if (session.user.email && email === 'contacto@proconnect.app') {
+            setEmail(session.user.email);
+          }
+        } else {
+          setCurrentUser(null);
+        }
+      });
+      return () => subscription.unsubscribe();
+    }
+  }, []);
+
+  const handleGoogleSignIn = async () => {
+    if (!isSupabaseEnabled || !supabase) {
+      const mockUser = {
+        id: 'usr_' + Date.now(),
+        email: 'usuario.google@proconnect.app',
+        user_metadata: { full_name: 'Usuario Google' },
+      };
+      setCurrentUser(mockUser);
+      return;
+    }
+    try {
+      const { error: oauthErr } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=/crear`,
+        },
+      });
+      if (oauthErr) {
+        alert(oauthErr.message);
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Error al conectar con Google');
+    }
+  };
+
   // Guardado automático en tiempo real cuando cambia cualquier dato
   useEffect(() => {
     if (step === 3) return;
@@ -604,17 +673,33 @@ export default function CrearTarjetaPage() {
   };
 
   const handleFinishAndSave = async () => {
+    // Si ya tenemos currentUser en estado
+    if (currentUser) {
+      await publishCardWithUser(currentUser);
+      return;
+    }
+
     // Verificar si el usuario ya tiene sesión activa en Supabase
     if (isSupabaseEnabled && supabase) {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
+          setCurrentUser(session.user);
           await publishCardWithUser(session.user);
           return;
         }
       } catch (err) {
         console.warn('Error verificando sesión Supabase:', err);
       }
+    }
+
+    // Si está en modo invitado
+    if (guestMode) {
+      await publishCardWithUser({
+        id: `guest_${Date.now()}`,
+        email: email || 'invitado@proconnect.app',
+      });
+      return;
     }
 
     // Si no está autenticado, interceptar con el modal Product-Led de Registro/Login
@@ -638,6 +723,125 @@ export default function CrearTarjetaPage() {
     { label: 'Ejecutivo 4', url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=400' },
   ];
 
+  if (authChecking) {
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+        <Navbar />
+        <main className="flex-1 flex items-center justify-center py-24">
+          <div className="flex flex-col items-center gap-4 text-center px-4">
+            <div className="w-10 h-10 border-4 border-brand-navy border-t-brand-cyan rounded-full animate-spin" />
+            <p className="text-sm font-semibold text-slate-600">Verificando sesión segura en ProConnect...</p>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  if (!currentUser && isSupabaseEnabled && !guestMode) {
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-brand-cyan/20 selection:text-brand-navy">
+        <Navbar />
+
+        <main className="flex-1 py-12 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
+          <div className="max-w-md w-full bg-white rounded-3xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6 text-center">
+            {/* Badge */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black shadow-sm mx-auto">
+              <Gift className="w-3.5 h-3.5 text-emerald-600" />
+              <span>1 Mes de Prueba Gratis • Sin Tarjeta</span>
+            </div>
+
+            <div className="space-y-2">
+              <h1 className="text-2xl sm:text-3xl font-black text-brand-navy tracking-tight">
+                Crea tu Tarjeta Inteligente
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Inicia sesión o crea tu cuenta para diseñar tu tarjeta digital. Estará vinculada de inmediato a tu perfil y lista para compartir en WhatsApp.
+              </p>
+            </div>
+
+            {/* Google OAuth Button */}
+            <div className="space-y-4 pt-2">
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm shadow-sm transition-all hover:shadow hover:border-slate-400 active:scale-[0.99]"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+                <span>Continuar con Google</span>
+              </button>
+
+              <div className="relative flex py-1 items-center">
+                <div className="flex-grow border-t border-slate-200" />
+                <span className="flex-shrink mx-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  o con tu correo
+                </span>
+                <div className="flex-grow border-t border-slate-200" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Link
+                  href="/login?redirect=/crear"
+                  className="w-full py-2.5 px-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs text-center transition-all flex items-center justify-center"
+                >
+                  Iniciar Sesión
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setShowAuthModal(true)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-brand-navy hover:bg-brand-navy/90 text-white font-bold text-xs text-center shadow transition-all"
+                >
+                  Registrarme
+                </button>
+              </div>
+            </div>
+
+            {/* Opción de continuar como invitado */}
+            <div className="pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setGuestMode(true)}
+                className="text-xs font-semibold text-slate-500 hover:text-brand-navy transition-colors inline-flex items-center gap-1 group"
+              >
+                <span>¿Solo deseas probar el diseñador? Continuar como invitado</span>
+                <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+              </button>
+            </div>
+          </div>
+        </main>
+
+        <AuthModal
+          isOpen={showAuthModal}
+          onClose={() => setShowAuthModal(false)}
+          onSuccess={(user) => {
+            setCurrentUser(user);
+            setShowAuthModal(false);
+          }}
+          title="Crea tu cuenta para comenzar"
+          subtitle="Accede a todas las plantillas, personalización y métricas en tiempo real."
+        />
+        <Footer />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-brand-cyan/20 selection:text-brand-navy">
       <Navbar />
@@ -647,9 +851,17 @@ export default function CrearTarjetaPage() {
           
           {/* Header del Asistente */}
           <div className="text-center max-w-2xl mx-auto space-y-2">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black shadow-sm">
-              <Gift className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Prueba 1 Mes 100% Gratis • Sin Tarjeta de Crédito</span>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black shadow-sm">
+                <Gift className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Prueba 1 Mes 100% Gratis • Sin Tarjeta</span>
+              </div>
+              {currentUser && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-xs font-semibold">
+                  <Check className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="truncate max-w-[200px]">Sesión: {currentUser.email}</span>
+                </div>
+              )}
             </div>
             <h1 className="text-3xl sm:text-4xl font-black text-brand-navy tracking-tight">
               Crea tu Tarjeta Digital en 60 Segundos
