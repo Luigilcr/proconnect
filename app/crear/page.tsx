@@ -52,6 +52,8 @@ import {
   Instagram,
   Linkedin,
   Video,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 export default function CrearTarjetaPage() {
@@ -86,6 +88,7 @@ export default function CrearTarjetaPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [enableCrm, setEnableCrm] = useState<boolean>(true);
+  const [mobileStep2Tab, setMobileStep2Tab] = useState<'simulator' | 'catalog'>('simulator');
 
   // Estados de Persistencia Temporal (Auto-Save) y Product-Led Auth
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -104,6 +107,23 @@ export default function CrearTarjetaPage() {
   // Obtener plantilla activa
   const activeTemplate: PresetTemplate =
     PRESET_TEMPLATES.find((t) => t.id === selectedTemplateId) || PRESET_TEMPLATES[0];
+
+  const currentTemplateIndex = Math.max(0, PRESET_TEMPLATES.findIndex((t) => t.id === selectedTemplateId));
+  const handleSelectTemplate = (tmpl: PresetTemplate) => {
+    setSelectedTemplateId(tmpl.id);
+    setCustomPrimaryColor(tmpl.colors.primary);
+    setCustomBgColor(tmpl.colors.background);
+    setCustomFont(tmpl.font_family);
+    setCustomRadius(tmpl.border_radius);
+  };
+  const handleNextTemplate = () => {
+    const nextIdx = (currentTemplateIndex + 1) % PRESET_TEMPLATES.length;
+    handleSelectTemplate(PRESET_TEMPLATES[nextIdx]);
+  };
+  const handlePrevTemplate = () => {
+    const prevIdx = (currentTemplateIndex - 1 + PRESET_TEMPLATES.length) % PRESET_TEMPLATES.length;
+    handleSelectTemplate(PRESET_TEMPLATES[prevIdx]);
+  };
 
   // Slug generado
   const slug = fullName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-');
@@ -466,85 +486,106 @@ export default function CrearTarjetaPage() {
     const finalizedCard: FullCard = {
       ...previewCard,
       user_id: user.id,
+      background_texture: activeTemplate.background_texture || previewCard.background_texture,
+      avatar_effect: activeTemplate.avatar_effect || previewCard.avatar_effect,
+      card_badge: activeTemplate.card_badge || previewCard.card_badge,
     };
 
-    // 1. Guardar en store local
+    // 1. Guardar en store local y cache por slug de alta prioridad
     saveCard(finalizedCard);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`proconnect_card_${finalizedCard.slug}`, JSON.stringify(finalizedCard));
+        sessionStorage.setItem(`proconnect_card_${finalizedCard.slug}`, JSON.stringify(finalizedCard));
+        localStorage.setItem('proconnect_active_card_slug', finalizedCard.slug);
+        localStorage.setItem('proconnect_active_card_id', finalizedCard.id);
+      } catch {}
+    }
 
     // 2. Sincronizar en Supabase si está disponible
     if (isSupabaseEnabled && supabase) {
       try {
-        await supabase.from('users').upsert({
-          id: user.id,
-          email: user.email || '',
-          full_name: finalizedCard.full_name,
-          role: user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? 'superadmin' : 'client',
+        // Intento 1: Llamar a la función RPC segura save_public_card (bypassa RLS)
+        const { data: rpcData, error: rpcError } = await supabase.rpc('save_public_card', {
+          p_card: {
+            ...finalizedCard,
+            user_email: user.email,
+          },
         });
 
-        await supabase.from('cards').upsert({
-          id: finalizedCard.id,
-          user_id: user.id,
-          slug: finalizedCard.slug,
-          full_name: finalizedCard.full_name,
-          job_title: finalizedCard.job_title,
-          company_name: finalizedCard.company_name,
-          bio: finalizedCard.bio,
-          profile_photo_url: finalizedCard.profile_photo_url,
-          cover_photo_url: finalizedCard.cover_photo_url,
-          logo_url: finalizedCard.logo_url,
-          layout_type: finalizedCard.layout_type || 'modern',
-          avatar_position: finalizedCard.avatar_position || 'header_floating',
-          button_style: finalizedCard.button_style || 'solid',
-          border_radius: finalizedCard.border_radius || 'md',
-          primary_color: finalizedCard.primary_color || '#0EA5E9',
-          secondary_color: finalizedCard.secondary_color || '#0369A1',
-          accent_color: finalizedCard.accent_color || '#38BDF8',
-          background_color: finalizedCard.background_color || '#0F172A',
-          font_family: finalizedCard.font_family || 'Inter',
-          font_weight: finalizedCard.font_weight || 'medium',
-          include_photo: finalizedCard.include_photo ?? true,
-          custom_vcf_notes: finalizedCard.custom_vcf_notes || '',
-          is_active: finalizedCard.is_active ?? true,
-          expires_at: finalizedCard.expires_at || new Date(Date.now() + 30 * 86400000).toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-
-        // 1. Borrar enlaces previos para evitar duplicados por reintentos
-        await supabase.from('card_links').delete().eq('card_id', finalizedCard.id);
-
-        // 2. Insertar enlaces deduplicados con identificadores únicos
-        if (Array.isArray(finalizedCard.links) && finalizedCard.links.length > 0) {
-          const seen = new Set<string>();
-          const uniqueLinks = finalizedCard.links.filter((l) => {
-            const key = `${l.type}:${(l.url || '').trim().toLowerCase()}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
+        if (rpcError) {
+          console.warn('RPC save_public_card aún no activo en Supabase, reintentando upsert estándar:', rpcError.message);
+          
+          await supabase.from('users').upsert({
+            id: user.id,
+            email: user.email || '',
+            full_name: finalizedCard.full_name,
+            role: user.email?.toLowerCase() === 'luigicolonico@gmail.com' ? 'superadmin' : 'client',
           });
 
-          const linksToInsert = uniqueLinks.map((l, idx) => ({
-            id: l.id && l.id.includes('-') && l.id.length >= 32 ? l.id : crypto.randomUUID(),
-            card_id: finalizedCard.id,
-            type: l.type || 'website',
-            label: l.label,
-            url: l.url,
-            icon_name: l.icon_name || null,
-            is_active: l.is_active ?? true,
-            position_order: idx + 1,
-          }));
-          await supabase.from('card_links').insert(linksToInsert);
+          await supabase.from('cards').upsert({
+            id: finalizedCard.id,
+            user_id: user.id,
+            slug: finalizedCard.slug,
+            full_name: finalizedCard.full_name,
+            job_title: finalizedCard.job_title,
+            company_name: finalizedCard.company_name,
+            bio: finalizedCard.bio,
+            profile_photo_url: finalizedCard.profile_photo_url,
+            cover_photo_url: finalizedCard.cover_photo_url,
+            logo_url: finalizedCard.logo_url,
+            layout_type: finalizedCard.layout_type || 'modern',
+            avatar_position: finalizedCard.avatar_position || 'header_floating',
+            button_style: finalizedCard.button_style || 'solid',
+            border_radius: finalizedCard.border_radius || 'md',
+            primary_color: finalizedCard.primary_color || '#0EA5E9',
+            secondary_color: finalizedCard.secondary_color || '#0369A1',
+            accent_color: finalizedCard.accent_color || '#38BDF8',
+            background_color: finalizedCard.background_color || '#0F172A',
+            font_family: finalizedCard.font_family || 'Inter',
+            font_weight: finalizedCard.font_weight || 'medium',
+            include_photo: finalizedCard.include_photo ?? true,
+            custom_vcf_notes: finalizedCard.custom_vcf_notes || '',
+            is_active: finalizedCard.is_active ?? true,
+            expires_at: finalizedCard.expires_at || new Date(Date.now() + 30 * 86400000).toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+
+          await supabase.from('card_links').delete().eq('card_id', finalizedCard.id);
+
+          if (Array.isArray(finalizedCard.links) && finalizedCard.links.length > 0) {
+            const seen = new Set<string>();
+            const uniqueLinks = finalizedCard.links.filter((l) => {
+              const key = `${l.type}:${(l.url || '').trim().toLowerCase()}`;
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+
+            const linksToInsert = uniqueLinks.map((l, idx) => ({
+              id: l.id && l.id.includes('-') && l.id.length >= 32 ? l.id : crypto.randomUUID(),
+              card_id: finalizedCard.id,
+              type: l.type || 'website',
+              label: l.label,
+              url: l.url,
+              icon_name: l.icon_name || null,
+              is_active: l.is_active ?? true,
+              position_order: idx + 1,
+            }));
+            await supabase.from('card_links').insert(linksToInsert);
+          }
         }
       } catch (err) {
         console.warn('Error sincronizando tarjeta en Supabase:', err);
       }
     }
 
-    // 3. Sincronizar en API local
+    // 3. Sincronizar en API local y caché de servidor
     try {
       await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card: finalizedCard }),
+        body: JSON.stringify({ card: { ...finalizedCard, user_email: user.email } }),
       });
     } catch (e) {
       console.warn('Error al sincronizar tarjeta con el servidor:', e);
@@ -555,9 +596,6 @@ export default function CrearTarjetaPage() {
     setDraftRestored(false);
     setIsPublishing(false);
     setShowAuthModal(false);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('proconnect_active_card_id', finalizedCard.id);
-    }
     setStep(3);
 
     if (typeof window !== 'undefined') {
@@ -1078,217 +1116,370 @@ export default function CrearTarjetaPage() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[420px] overflow-y-auto pr-1">
-                    {PRESET_TEMPLATES.map((tmpl) => (
-                      <button
-                        key={tmpl.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedTemplateId(tmpl.id);
-                          setCustomPrimaryColor(tmpl.colors.primary);
-                          setCustomBgColor(tmpl.colors.background);
-                          setCustomFont(tmpl.font_family);
-                          setCustomRadius(tmpl.border_radius);
-                        }}
-                        className={`p-4 rounded-2xl text-left border transition-all relative flex flex-col justify-between ${
-                          selectedTemplateId === tmpl.id
-                            ? 'border-brand-navy bg-brand-navy/5 ring-2 ring-brand-navy shadow-md'
-                            : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-1 mb-1.5">
-                            <span className="text-xs font-black text-slate-900 line-clamp-1">
-                              {tmpl.name}
-                            </span>
-                            <span
-                              className="w-3.5 h-3.5 rounded-full border border-black/10 shrink-0"
-                              style={{ backgroundColor: tmpl.colors.primary }}
-                            />
-                          </div>
-                          <span className="inline-block text-[10px] font-bold text-brand-blue bg-brand-blue/10 px-2 py-0.5 rounded-md mb-2">
-                            {tmpl.industry}
-                          </span>
-                          <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
-                            {tmpl.description}
-                          </p>
-                        </div>
-
-                        {selectedTemplateId === tmpl.id && (
-                          <div className="mt-3 flex items-center gap-1 text-[11px] font-bold text-brand-navy">
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Seleccionada</span>
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Panel de Ajuste Fino de Colores y Tipografía */}
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+                  {/* Selector de Modo en Pantallas Móviles (lg:hidden) */}
+                  <div className="lg:hidden flex items-center p-1 bg-slate-100 rounded-2xl border border-slate-200 shadow-inner">
                     <button
                       type="button"
-                      onClick={() => setShowCustomizer(!showCustomizer)}
-                      className="w-full flex items-center justify-between text-xs font-bold text-brand-navy hover:text-brand-blue transition-colors"
+                      onClick={() => setMobileStep2Tab('simulator')}
+                      className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                        mobileStep2Tab === 'simulator'
+                          ? 'bg-brand-navy text-white shadow-md'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
-                      <div className="flex items-center gap-2">
-                        <Sliders className="w-4 h-4 text-brand-cyan" />
-                        <span>🎨 Ajustar Colores, Fondo y Tipografía a tu Gusto</span>
-                      </div>
-                      <span className="text-[11px] text-brand-blue underline">
-                        {showCustomizer ? 'Ocultar Ajustes' : 'Personalizar Detalles'}
-                      </span>
+                      <Smartphone className="w-3.5 h-3.5 text-brand-cyan" />
+                      <span>📱 Simulador Rápido</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setMobileStep2Tab('catalog')}
+                      className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                        mobileStep2Tab === 'catalog'
+                          ? 'bg-brand-navy text-white shadow-md'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Palette className="w-3.5 h-3.5 text-brand-blue" />
+                      <span>🎨 Catálogo ({PRESET_TEMPLATES.length})</span>
+                    </button>
+                  </div>
 
-                    {showCustomizer && (
-                      <div className="pt-3 border-t border-slate-200 space-y-4 animate-in fade-in duration-150">
-                        {/* Selector de Colores */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
-                            <label className="text-[11px] font-bold text-slate-700 block">
-                              Color Principal / Botones
-                            </label>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="color"
-                                value={customPrimaryColor}
-                                onChange={(e) => setCustomPrimaryColor(e.target.value)}
-                                className="w-8 h-8 rounded-lg cursor-pointer border-0 p-0"
-                              />
-                              <input
-                                type="text"
-                                value={customPrimaryColor}
-                                onChange={(e) => setCustomPrimaryColor(e.target.value)}
-                                className="flex-1 px-2.5 py-1 text-xs font-mono rounded-lg border border-slate-300"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
-                            <label className="text-[11px] font-bold text-slate-700 block">
-                              Color de Fondo de la Tarjeta
-                            </label>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="color"
-                                value={customBgColor}
-                                onChange={(e) => setCustomBgColor(e.target.value)}
-                                className="w-8 h-8 rounded-lg cursor-pointer border-0 p-0"
-                              />
-                              <input
-                                type="text"
-                                value={customBgColor}
-                                onChange={(e) => setCustomBgColor(e.target.value)}
-                                className="flex-1 px-2.5 py-1 text-xs font-mono rounded-lg border border-slate-300"
-                              />
-                            </div>
-                          </div>
+                  {/* VISTA MÓVIL A: SIMULADOR TÁCTIL CON CARRUSEL DIRECTO (Sin Scroll Aburrido) */}
+                  {mobileStep2Tab === 'simulator' && (
+                    <div className="lg:hidden flex flex-col items-center space-y-4">
+                      {/* Cabecera del Simulador */}
+                      <div className="w-full max-w-[340px] flex items-center justify-between px-1">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="text-xs font-bold text-slate-800">Simulador en Vivo</span>
                         </div>
-
-                        {/* Selector de Tipografía */}
-                        <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
-                          <label className="text-[11px] font-bold text-slate-700 block flex items-center gap-1.5">
-                            <Type className="w-3.5 h-3.5 text-brand-blue" />
-                            <span>Tipo de Letra (Tipografía)</span>
-                          </label>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                            {[
-                              { id: 'Inter', name: 'Inter (Moderna)' },
-                              { id: 'Poppins', name: 'Poppins (Geométrica)' },
-                              { id: 'Playfair Display', name: 'Playfair (Elegante)' },
-                              { id: 'Montserrat', name: 'Montserrat (Fuerte)' },
-                            ].map((font) => (
-                              <button
-                                key={font.id}
-                                type="button"
-                                onClick={() => setCustomFont(font.id)}
-                                className={`p-2 rounded-lg text-xs font-bold border transition-all text-center ${
-                                  customFont === font.id
-                                    ? 'bg-brand-navy text-white border-brand-navy shadow-sm'
-                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                                }`}
-                              >
-                                {font.name}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Forma de Botones */}
-                        <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
-                          <label className="text-[11px] font-bold text-slate-700 block">
-                            Forma de Esquinas y Botones
-                          </label>
-                          <div className="grid grid-cols-3 gap-2">
-                            {[
-                              { id: 'sm', label: 'Cuadrado Suave' },
-                              { id: 'lg', label: 'Redondeado Ejecutivo' },
-                              { id: 'full', label: 'Píldora Total' },
-                            ].map((r) => (
-                              <button
-                                key={r.id}
-                                type="button"
-                                onClick={() => setCustomRadius(r.id)}
-                                className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
-                                  customRadius === r.id
-                                    ? 'bg-brand-navy text-white border-brand-navy'
-                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                                }`}
-                              >
-                                {r.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
+                        <span className="text-[10px] font-black text-brand-blue bg-brand-blue/10 px-2.5 py-0.5 rounded-full uppercase">
+                          {activeTemplate.name.split(' ')[0]}
+                        </span>
                       </div>
-                    )}
 
-                    {/* Módulo Opcional: CRM / Captura de Prospectos */}
-                    <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-0.5">
-                          <span className="inline-flex items-center gap-1.5 text-xs font-black text-brand-navy">
-                            <span>🤝 Módulo Captura de Contactos / Mini-CRM</span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-700">
-                              Opcional
-                            </span>
-                          </span>
-                          <p className="text-[11px] text-slate-500 leading-relaxed">
-                            Muestra el botón flotante <strong>"Conectar / Dejar Mis Datos"</strong> en tu tarjeta para que quien la escanee te envíe su contacto a tu base de datos. Puedes desactivarlo si solo deseas que tu tarjeta sea informativa.
-                          </p>
+                      {/* Smartphone Frame Integrado */}
+                      <div className="relative w-[320px] sm:w-[340px] h-[520px] sm:h-[560px] bg-slate-950 rounded-[42px] p-2.5 shadow-2xl border-4 border-slate-800 ring-1 ring-slate-700/50 flex flex-col justify-between overflow-hidden">
+                        {/* Dynamic Island */}
+                        <div className="absolute top-3.5 left-1/2 -translate-x-1/2 w-20 h-4 bg-black rounded-full z-40 flex items-center justify-center pointer-events-none">
+                          <div className="w-1.5 h-1.5 rounded-full bg-slate-900 border border-slate-700 mr-2" />
+                          <div className="w-1 h-1 rounded-full bg-sky-950" />
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
-                          <input
-                            type="checkbox"
-                            checked={enableCrm}
-                            onChange={(e) => setEnableCrm(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-blue"></div>
-                        </label>
+
+                        {/* Contenido de la Pantalla */}
+                        <div className="w-full h-full rounded-[32px] overflow-y-auto bg-slate-900 scrollbar-none relative text-left">
+                          <DigitalCard card={previewCard} isSimulator={true} />
+                        </div>
+
+                        {/* Home Indicator */}
+                        <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-20 h-1 bg-white/40 rounded-full z-40 pointer-events-none" />
+                      </div>
+
+                      {/* Controles de Navegación Táctil 1-Toque */}
+                      <div className="w-full max-w-[340px] space-y-3">
+                        <div className="flex items-center justify-between bg-slate-100 p-2 rounded-2xl border border-slate-200 shadow-sm">
+                          <button
+                            type="button"
+                            onClick={handlePrevTemplate}
+                            className="px-3 py-2 rounded-xl bg-white text-slate-800 font-bold text-xs shadow-sm hover:bg-slate-50 flex items-center gap-1 active:scale-95 transition-all"
+                          >
+                            <ChevronLeft className="w-4 h-4 text-brand-blue" />
+                            <span>Ant.</span>
+                          </button>
+
+                          <div className="text-center px-2">
+                            <span className="text-[10px] font-bold text-slate-400 block uppercase">
+                              {currentTemplateIndex + 1} de {PRESET_TEMPLATES.length}
+                            </span>
+                            <span className="text-xs font-black text-slate-900 line-clamp-1 max-w-[150px]">
+                              {activeTemplate.name}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleNextTemplate}
+                            className="px-3 py-2 rounded-xl bg-white text-slate-800 font-bold text-xs shadow-sm hover:bg-slate-50 flex items-center gap-1 active:scale-95 transition-all"
+                          >
+                            <span>Sig.</span>
+                            <ChevronRight className="w-4 h-4 text-brand-blue" />
+                          </button>
+                        </div>
+
+                        {/* Tira Deslizable Horizontal (Swipe) de Mini-Pastillas de Plantillas */}
+                        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 no-scrollbar scroll-smooth">
+                          {PRESET_TEMPLATES.map((tmpl) => (
+                            <button
+                              key={tmpl.id}
+                              type="button"
+                              onClick={() => handleSelectTemplate(tmpl)}
+                              className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                                selectedTemplateId === tmpl.id
+                                  ? 'bg-brand-navy text-white border-brand-navy shadow-md ring-2 ring-brand-cyan/50'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span
+                                className="w-2.5 h-2.5 rounded-full border border-black/15 shrink-0"
+                                style={{ backgroundColor: tmpl.colors.primary }}
+                              />
+                              <span className="whitespace-nowrap">{tmpl.name.split(' ')[0]}</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Botón Acción Principal Móvil */}
+                        <div className="pt-2 flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={handleFinishAndSave}
+                            className="w-full py-3.5 px-5 rounded-2xl bg-brand-navy hover:bg-slate-800 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-brand-navy/20 transition-all active:scale-98"
+                          >
+                            <span>Guardar y Publicar Tarjeta (Paso 3)</span>
+                            <ArrowRight className="w-4 h-4 text-brand-cyan" />
+                          </button>
+
+                          <div className="flex items-center justify-between pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setStep(1)}
+                              className="text-xs font-bold text-slate-500 hover:text-slate-800 py-1"
+                            >
+                              ← Volver a Datos
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setMobileStep2Tab('catalog')}
+                              className="text-xs font-bold text-brand-blue hover:underline py-1"
+                            >
+                              Ver Catálogo Completo →
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                  </div>
+                  {/* VISTA B: CATÁLOGO COMPLETO (Disponible siempre en desktop y como tab en móvil) */}
+                  <div className={`space-y-5 ${mobileStep2Tab === 'simulator' ? 'hidden lg:block' : 'block'}`}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[420px] overflow-y-auto pr-1">
+                      {PRESET_TEMPLATES.map((tmpl) => (
+                        <button
+                          key={tmpl.id}
+                          type="button"
+                          onClick={() => handleSelectTemplate(tmpl)}
+                          className={`p-4 rounded-2xl text-left border transition-all relative flex flex-col justify-between ${
+                            selectedTemplateId === tmpl.id
+                              ? 'border-brand-navy bg-brand-navy/5 ring-2 ring-brand-navy shadow-md'
+                              : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-1 mb-1.5">
+                              <span className="text-xs font-black text-slate-900 line-clamp-1">
+                                {tmpl.name}
+                              </span>
+                              <span
+                                className="w-3.5 h-3.5 rounded-full border border-black/10 shrink-0"
+                                style={{ backgroundColor: tmpl.colors.primary }}
+                              />
+                            </div>
+                            <span className="inline-block text-[10px] font-bold text-brand-blue bg-brand-blue/10 px-2 py-0.5 rounded-md mb-2">
+                              {tmpl.industry}
+                            </span>
+                            <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
+                              {tmpl.description}
+                            </p>
+                          </div>
 
-                  <div className="pt-4 flex items-center justify-between border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => setStep(1)}
-                      className="px-5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 transition-colors"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5" />
-                      <span>Volver a Datos</span>
-                    </button>
+                          {selectedTemplateId === tmpl.id && (
+                            <div className="mt-3 flex items-center justify-between text-[11px] font-bold text-brand-navy">
+                              <span className="flex items-center gap-1 text-emerald-600">
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Seleccionada</span>
+                              </span>
+                              <span
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMobileStep2Tab('simulator');
+                                }}
+                                className="lg:hidden text-[10px] text-brand-blue underline"
+                              >
+                                Ver en simulador 📱
+                              </span>
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
 
-                    <button
-                      type="button"
-                      onClick={handleFinishAndSave}
-                      className="px-6 py-3 rounded-xl bg-brand-navy hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-2 transition-all shadow-md"
-                    >
-                      <span>Finalizar y Obtener Tarjeta</span>
-                      <Sparkles className="w-3.5 h-3.5 text-brand-cyan" />
-                    </button>
+                    {/* Panel de Ajuste Fino de Colores y Tipografía */}
+                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomizer(!showCustomizer)}
+                        className="w-full flex items-center justify-between text-xs font-bold text-brand-navy hover:text-brand-blue transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Sliders className="w-4 h-4 text-brand-cyan" />
+                          <span>🎨 Ajustar Colores, Fondo y Tipografía a tu Gusto</span>
+                        </div>
+                        <span className="text-[11px] text-brand-blue underline">
+                          {showCustomizer ? 'Ocultar Ajustes' : 'Personalizar Detalles'}
+                        </span>
+                      </button>
+
+                      {showCustomizer && (
+                        <div className="pt-3 border-t border-slate-200 space-y-4 animate-in fade-in duration-150">
+                          {/* Selector de Colores */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
+                              <label className="text-[11px] font-bold text-slate-700 block">
+                                Color Principal / Botones
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="color"
+                                  value={customPrimaryColor}
+                                  onChange={(e) => setCustomPrimaryColor(e.target.value)}
+                                  className="w-8 h-8 rounded-lg cursor-pointer border-0 p-0"
+                                />
+                                <input
+                                  type="text"
+                                  value={customPrimaryColor}
+                                  onChange={(e) => setCustomPrimaryColor(e.target.value)}
+                                  className="flex-1 px-2.5 py-1 text-xs font-mono rounded-lg border border-slate-300"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
+                              <label className="text-[11px] font-bold text-slate-700 block">
+                                Color de Fondo de la Tarjeta
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="color"
+                                  value={customBgColor}
+                                  onChange={(e) => setCustomBgColor(e.target.value)}
+                                  className="w-8 h-8 rounded-lg cursor-pointer border-0 p-0"
+                                />
+                                <input
+                                  type="text"
+                                  value={customBgColor}
+                                  onChange={(e) => setCustomBgColor(e.target.value)}
+                                  className="flex-1 px-2.5 py-1 text-xs font-mono rounded-lg border border-slate-300"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Selector de Tipografía */}
+                          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
+                            <label className="text-[11px] font-bold text-slate-700 block flex items-center gap-1.5">
+                              <Type className="w-3.5 h-3.5 text-brand-blue" />
+                              <span>Tipo de Letra (Tipografía)</span>
+                            </label>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                              {[
+                                { id: 'Inter', name: 'Inter (Moderna)' },
+                                { id: 'Poppins', name: 'Poppins (Geométrica)' },
+                                { id: 'Playfair Display', name: 'Playfair (Elegante)' },
+                                { id: 'Montserrat', name: 'Montserrat (Fuerte)' },
+                              ].map((font) => (
+                                <button
+                                  key={font.id}
+                                  type="button"
+                                  onClick={() => setCustomFont(font.id)}
+                                  className={`p-2 rounded-lg text-xs font-bold border transition-all text-center ${
+                                    customFont === font.id
+                                      ? 'bg-brand-navy text-white border-brand-navy shadow-sm'
+                                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {font.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Forma de Botones */}
+                          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
+                            <label className="text-[11px] font-bold text-slate-700 block">
+                              Forma de Esquinas y Botones
+                            </label>
+                            <div className="grid grid-cols-3 gap-2">
+                              {[
+                                { id: 'sm', label: 'Cuadrado Suave' },
+                                { id: 'lg', label: 'Redondeado Ejecutivo' },
+                                { id: 'full', label: 'Píldora Total' },
+                              ].map((r) => (
+                                <button
+                                  key={r.id}
+                                  type="button"
+                                  onClick={() => setCustomRadius(r.id)}
+                                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                                    customRadius === r.id
+                                      ? 'bg-brand-navy text-white border-brand-navy'
+                                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {r.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Módulo Opcional: CRM / Captura de Prospectos */}
+                      <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1.5 text-xs font-black text-brand-navy">
+                              <span>🤝 Módulo Captura de Contactos / Mini-CRM</span>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-700">
+                                Opcional
+                              </span>
+                            </span>
+                            <p className="text-[11px] text-slate-500 leading-relaxed">
+                              Muestra el botón flotante <strong>"Conectar / Dejar Mis Datos"</strong> en tu tarjeta para que quien la escanee te envíe su contacto a tu base de datos. Puedes desactivarlo si solo deseas que tu tarjeta sea informativa.
+                            </p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                            <input
+                              type="checkbox"
+                              checked={enableCrm}
+                              onChange={(e) => setEnableCrm(e.target.checked)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-blue"></div>
+                          </label>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    <div className="pt-4 flex items-center justify-between border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setStep(1)}
+                        className="px-5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>Volver a Datos</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleFinishAndSave}
+                        className="px-6 py-3 rounded-xl bg-brand-navy hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-2 transition-all shadow-md"
+                      >
+                        <span>Finalizar y Obtener Tarjeta</span>
+                        <Sparkles className="w-3.5 h-3.5 text-brand-cyan" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1378,7 +1569,7 @@ export default function CrearTarjetaPage() {
             </div>
 
             {/* Columna Derecha: Teléfono Inteligente en Vivo (5 Cols) */}
-            <div className="lg:col-span-5 flex flex-col items-center sticky top-8">
+            <div className={`lg:col-span-5 flex flex-col items-center sticky top-8 ${step === 2 ? 'hidden lg:flex' : 'flex'}`}>
               <div className="flex items-center justify-between w-full max-w-[340px] sm:max-w-[360px] mb-2 px-2">
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />

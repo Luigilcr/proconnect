@@ -59,6 +59,14 @@ export async function GET(request: NextRequest) {
       if (!error && sbCard) {
         return NextResponse.json({ success: true, card: sbCard });
       }
+
+      // Fallback a RPC get_public_card con SECURITY DEFINER
+      const { data: rpcCard } = await supabase.rpc('get_public_card', {
+        p_slug: slug,
+      });
+      if (rpcCard) {
+        return NextResponse.json({ success: true, card: rpcCard });
+      }
     } catch (err) {
       console.warn('Error querying Supabase in /api/cards:', err);
     }
@@ -103,9 +111,18 @@ export async function POST(request: NextRequest) {
     inMemoryCards = cards;
     persistServerCards(cards);
 
-    // Sincronizar en Supabase si está disponible
+    // 1. Sincronizar en Supabase mediante RPC de alta seguridad (bypassa RLS) o cliente admin
     if (isSupabaseEnabled && supabase) {
       try {
+        const { data: rpcCard, error: rpcErr } = await supabase.rpc('save_public_card', {
+          p_card: card,
+        });
+
+        if (!rpcErr && rpcCard) {
+          return NextResponse.json({ success: true, card: rpcCard });
+        }
+
+        // Fallback a upsert directo si RPC no está desplegado aún
         await supabase.from('cards').upsert({
           id: card.id,
           user_id: card.user_id,

@@ -86,17 +86,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         if (data?.user) {
           // Si requiere confirmación de email o ya inició sesión automáticamente
           if (data.session) {
-            setSuccess('¡Cuenta creada con éxito!');
+            setSuccess('¡Cuenta creada con éxito! Publicando tarjeta...');
             setTimeout(() => {
-              onSuccess(data.user);
+              onSuccess({ ...data.user, email });
               onClose();
             }, 600);
           } else {
-            setSuccess('¡Cuenta registrada! Por favor confirma tu correo o inicia sesión para continuar.');
+            setSuccess('¡Cuenta registrada! Publicando tu tarjeta de inmediato...');
             setTimeout(() => {
-              onSuccess(data.user);
+              onSuccess({ ...(data.user || {}), id: data.user?.id || 'usr_' + Date.now(), email, email_pending: true });
               onClose();
-            }, 1000);
+            }, 800);
           }
         }
       } else {
