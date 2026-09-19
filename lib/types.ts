@@ -73,6 +73,10 @@ export interface Organization {
   enforce_brand_lock: boolean;
   max_cards: number;
   org_type?: OrgType;
+  industry_type?: 'corporate' | 'restaurant' | 'real_estate' | 'legal' | 'health' | 'technology' | 'other';
+  description?: string | null;
+  mandatory_links?: { label: string; url: string; type: LinkType }[];
+  legal_disclaimer?: string | null;
   subscription_status?: SubscriptionStatus;
   webhook_url?: string | null;
   created_at: string;
@@ -136,6 +140,8 @@ export interface Card {
   updated_at?: string;
   expires_at?: string | null;
   plan_duration?: 'monthly' | 'annual' | 'lifetime' | 'custom';
+  redirect_to_slug?: string | null;
+  department?: string | null;
 }
 
 export type BackgroundTexture = 'none' | 'dots' | 'grid' | 'carbon' | 'subtle_noise' | 'mesh_gradient';

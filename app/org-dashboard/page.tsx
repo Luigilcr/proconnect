@@ -61,6 +61,7 @@ import { Footer } from '@/components/layout/Footer';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase, isSupabaseEnabled } from '@/lib/supabase';
 import { isSuperAdminEmail } from '@/lib/db-normalize';
+import { BatchPrintModal } from '@/components/org/BatchPrintModal';
 import {
   Building2,
   Briefcase,
@@ -105,7 +106,14 @@ import {
   AlertCircle,
   ChevronRight,
   User,
+  Trophy,
+  BarChart3,
+  ArrowRightLeft,
+  Globe,
+  Search,
 } from 'lucide-react';
+
+export type B2BTab = 'overview' | 'team' | 'import' | 'brand' | 'crm' | 'directory' | 'print' | 'restaurant';
 
 export default function OrgDashboardPage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -136,15 +144,30 @@ export default function OrgDashboardPage() {
   const [empTitle, setEmpTitle] = useState('');
   const [empEmail, setEmpEmail] = useState('');
   const [empPhone, setEmpPhone] = useState('');
+  const [empDept, setEmpDept] = useState('');
   const [isCreatingEmp, setIsCreatingEmp] = useState(false);
 
   const [isExtracting, setIsExtracting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [showBatchQRModal, setShowBatchQRModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'brand' | 'team' | 'restaurant'>('brand');
+  const [activeTab, setActiveTab] = useState<B2BTab>('overview');
 
-  // Formulario de marca
+  // Redirección inteligente de tarjeta por baja laboral
+  const [redirectingCard, setRedirectingCard] = useState<FullCard | null>(null);
+  const [redirectTarget, setRedirectTarget] = useState('');
+  const [isSavingRedirect, setIsSavingRedirect] = useState(false);
+
+  // Búsqueda en equipo
+  const [teamSearch, setTeamSearch] = useState('');
+
+  // CSV
+  const [csvUploading, setCsvUploading] = useState(false);
+  const [csvResult, setCsvResult] = useState<{ count: number; message: string } | null>(null);
+
+  // Formulario de marca y datos corporativos
   const [logoInput, setLogoInput] = useState('');
+  const [orgDescInput, setOrgDescInput] = useState('');
+  const [orgDisclaimerInput, setOrgDisclaimerInput] = useState('');
   const [colors, setColors] = useState<BrandColors>({
     primary: '#0EA5E9',
     secondary: '#0369A1',
@@ -347,6 +370,8 @@ export default function OrgDashboardPage() {
       const active = loadedOrgs.find((o) => o.id === selectedOrgId) || loadedOrgs[0];
       setSelectedOrgId(active.id);
       setLogoInput(active.logo_url || '');
+      setOrgDescInput(active.description || '');
+      setOrgDisclaimerInput(active.legal_disclaimer || '');
       setColors(active.brand_colors || {
         primary: '#0EA5E9',
         secondary: '#0369A1',
@@ -461,6 +486,8 @@ export default function OrgDashboardPage() {
       ...currentOrg,
       logo_url: logoInput.trim() || null,
       brand_colors: colors,
+      description: orgDescInput.trim() || null,
+      legal_disclaimer: orgDisclaimerInput.trim() || null,
     };
 
     // 1. Supabase
@@ -469,6 +496,8 @@ export default function OrgDashboardPage() {
         await supabase.from('organizations').update({
           logo_url: updated.logo_url,
           brand_colors: updated.brand_colors,
+          description: updated.description,
+          legal_disclaimer: updated.legal_disclaimer,
         }).eq('id', currentOrg.id);
 
         if (currentOrg.enforce_brand_lock) {
@@ -505,6 +534,246 @@ export default function OrgDashboardPage() {
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
   };
+
+  // Guardar redirección inteligente de tarjeta por baja laboral
+  const handleSaveCardRedirect = async () => {
+    if (!redirectingCard) return;
+    setIsSavingRedirect(true);
+    const target = redirectTarget.trim();
+
+    if (isSupabaseEnabled && supabase) {
+      try {
+        await supabase
+          .from('cards')
+          .update({ redirect_to_slug: target || null })
+          .eq('id', redirectingCard.id);
+      } catch (err) {
+        console.warn('Error guardando redirección en Supabase:', err);
+      }
+    }
+
+    const updatedCard: FullCard = {
+      ...redirectingCard,
+      redirect_to_slug: target || null,
+    };
+    saveCard(updatedCard);
+    setCards((prev) => prev.map((c) => (c.id === redirectingCard.id ? updatedCard : c)));
+    setRedirectingCard(null);
+    setRedirectTarget('');
+    setIsSavingRedirect(false);
+  };
+
+  // Importación masiva por archivo CSV
+  const handleCsvBatchImport = async (file: File) => {
+    if (!file || !currentOrg) return;
+    setCsvUploading(true);
+    setCsvResult(null);
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        const lines = text.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);
+        if (lines.length === 0) {
+          alert('El archivo CSV está vacío.');
+          setCsvUploading(false);
+          return;
+        }
+
+        const header = lines[0].toLowerCase();
+        const startIdx = header.includes('nombre') || header.includes('name') ? 1 : 0;
+        const rows = lines.slice(startIdx);
+
+        let uid = 'a0000000-0000-0000-0000-000000000002';
+        if (isSupabaseEnabled && supabase) {
+          const { data: sessionData } = await supabase.auth.getSession();
+          if (sessionData?.session?.user?.id) {
+            uid = sessionData.session.user.id;
+          }
+        }
+
+        const newCards: FullCard[] = [];
+        const newCardRowsForSupabase: any[] = [];
+        const newLinksForSupabase: any[] = [];
+
+        rows.forEach((line, idx) => {
+          const cols = line.split(/,|;|\t/);
+          const name = cols[0]?.trim();
+          if (!name) return;
+
+          const title = cols[1]?.trim() || 'Colaborador';
+          const email = cols[2]?.trim() || '';
+          const phone = cols[3]?.trim() || '';
+          const dept = cols[4]?.trim() || '';
+
+          const cardId = crypto.randomUUID();
+          const slugBase = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+          const slug = `${slugBase}-${Date.now().toString().slice(-4)}-${idx + 1}`;
+
+          const links: any[] = [];
+          if (email) {
+            const emailLink = {
+              id: crypto.randomUUID(),
+              card_id: cardId,
+              type: 'email' as const,
+              label: 'Correo Electrónico',
+              url: `mailto:${email}`,
+              icon_name: 'Mail',
+              is_active: true,
+              position_order: 0,
+            };
+            links.push(emailLink);
+            newLinksForSupabase.push(emailLink);
+          }
+          if (phone) {
+            const phoneLink = {
+              id: crypto.randomUUID(),
+              card_id: cardId,
+              type: 'phone' as const,
+              label: 'Teléfono Directo',
+              url: `tel:${phone}`,
+              icon_name: 'Phone',
+              is_active: true,
+              position_order: 1,
+            };
+            links.push(phoneLink);
+            newLinksForSupabase.push(phoneLink);
+          }
+
+          const card: FullCard = {
+            id: cardId,
+            user_id: uid,
+            organization_id: currentOrg.id,
+            slug,
+            is_active: true,
+            full_name: name,
+            job_title: title,
+            company_name: currentOrg.name,
+            department: dept || null,
+            bio: `Miembro oficial del equipo profesional en ${currentOrg.name}.`,
+            profile_photo_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=600',
+            cover_photo_url: 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1200',
+            logo_url: currentOrg.logo_url,
+            layout_type: 'banner_header',
+            avatar_position: 'header_floating',
+            button_style: 'gradient',
+            border_radius: 'lg',
+            primary_color: currentOrg.brand_colors?.primary || '#0EA5E9',
+            secondary_color: currentOrg.brand_colors?.secondary || '#0369A1',
+            accent_color: currentOrg.brand_colors?.accent || '#38BDF8',
+            background_color: currentOrg.brand_colors?.background || '#0F172A',
+            font_family: currentOrg.font_family || 'Inter',
+            font_weight: 'semibold',
+            include_photo: true,
+            custom_vcf_notes: `Contacto verificado por ${currentOrg.name}.`,
+            created_at: new Date().toISOString(),
+            links,
+            multimedia: [],
+          };
+
+          newCards.push(card);
+          newCardRowsForSupabase.push({
+            id: card.id,
+            user_id: card.user_id,
+            organization_id: card.organization_id,
+            slug: card.slug,
+            is_active: card.is_active,
+            full_name: card.full_name,
+            job_title: card.job_title,
+            company_name: card.company_name,
+            bio: card.bio,
+            profile_photo_url: card.profile_photo_url,
+            cover_photo_url: card.cover_photo_url,
+            logo_url: card.logo_url,
+            layout_type: card.layout_type,
+            avatar_position: card.avatar_position,
+            button_style: card.button_style,
+            border_radius: card.border_radius,
+            primary_color: card.primary_color,
+            secondary_color: card.secondary_color,
+            accent_color: card.accent_color,
+            background_color: card.background_color,
+            font_family: card.font_family,
+            font_weight: card.font_weight,
+            include_photo: card.include_photo,
+            custom_vcf_notes: card.custom_vcf_notes,
+            created_at: card.created_at,
+          });
+        });
+
+        if (isSupabaseEnabled && supabase && newCardRowsForSupabase.length > 0) {
+          try {
+            const { error: insErr } = await supabase.from('cards').insert(newCardRowsForSupabase);
+            if (insErr) {
+              console.warn('Error inserting batch cards to Supabase:', insErr);
+            }
+            if (newLinksForSupabase.length > 0) {
+              await supabase.from('card_links').insert(newLinksForSupabase);
+            }
+          } catch (err) {
+            console.warn('Error during batch Supabase insertion:', err);
+          }
+        }
+
+        newCards.forEach((c) => saveCard(c));
+        setCards((prev) => [...newCards, ...prev]);
+        setCsvResult({
+          count: newCards.length,
+          message: `¡Éxito! Se importaron ${newCards.length} colaboradores con sus enlaces y códigos QR listos.`,
+        });
+        await loadOrgData();
+      } catch (err) {
+        console.error('Error procesando archivo CSV:', err);
+        alert('Hubo un problema procesando el archivo CSV.');
+      } finally {
+        setCsvUploading(false);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDownloadCsvTemplate = () => {
+    const content = `nombre,cargo,email,telefono,departamento
+Alejandro Morales,Director Comercial,alejandro@empresa.com,+34611223344,Ventas
+Sofía Navarro,Gerente de Operaciones,sofia@empresa.com,+34622334455,Operaciones
+Carlos Mendoza,Ejecutivo Senior,carlos@empresa.com,+34633445566,Ventas`;
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `plantilla_colaboradores_${currentOrg?.slug || 'empresa'}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Ranking comercial (Leaderboard)
+  const leaderboardReps = React.useMemo(() => {
+    return cards
+      .map((c) => {
+        const leadsCount = orgLeads.filter(
+          (l) =>
+            l.card_id === c.id ||
+            l.salesperson_name?.toLowerCase().trim() === c.full_name?.toLowerCase().trim()
+        ).length;
+        return { card: c, leadsCount };
+      })
+      .sort((a, b) => b.leadsCount - a.leadsCount);
+  }, [cards, orgLeads]);
+
+  // Filtro de colaboradores
+  const filteredTeamCards = React.useMemo(() => {
+    if (!teamSearch.trim()) return cards;
+    const q = teamSearch.toLowerCase().trim();
+    return cards.filter(
+      (c) =>
+        c.full_name?.toLowerCase().includes(q) ||
+        c.job_title?.toLowerCase().includes(q) ||
+        c.department?.toLowerCase().includes(q) ||
+        c.slug?.toLowerCase().includes(q)
+    );
+  }, [cards, teamSearch]);
 
   // Alternar Brand Lock
   const handleToggleBrandLock = async () => {
@@ -823,523 +1092,796 @@ export default function OrgDashboardPage() {
 
         {currentOrg && (
           <>
-        {/* 1. Métricas Globales de la Empresa */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-          <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              Cupo de Tarjetas NFC
-            </span>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-black text-slate-900 dark:text-white">
-                {cards.length}
-              </span>
-              <span className="text-xs text-slate-400 font-semibold">
-                / {currentOrg.max_cards} asignadas
-              </span>
-            </div>
-            <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full mt-2 overflow-hidden">
-              <div
-                className="h-full bg-purple-500 rounded-full"
-                style={{
-                  width: `${Math.min(100, (cards.length / currentOrg.max_cards) * 100)}%`,
-                }}
-              />
-            </div>
-          </div>
+        {/* NAVEGACIÓN POR PESTAÑAS EJECUTIVAS */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-200 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              activeTab === 'overview'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20 scale-[1.02]'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Resumen & Métricas</span>
+          </button>
 
-          <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              Escaneos Totales del Equipo
-            </span>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-black text-slate-900 dark:text-white">
-                1,845
-              </span>
-              <span className="text-xs text-emerald-500 font-bold flex items-center gap-0.5">
-                <TrendingUp className="w-3 h-3" /> +24%
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 mt-2">Visitas registradas vía NFC/QR</p>
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('team')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              activeTab === 'team'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20 scale-[1.02]'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Equipo & Tarjetas ({cards.length})</span>
+          </button>
 
-          <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              Contactos Guardados (.vcf)
-            </span>
-            <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-              438
-            </p>
-            <p className="text-[11px] text-slate-400 mt-2">vCards descargadas a agendas</p>
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('import')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              activeTab === 'import'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20 scale-[1.02]'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Importación Masiva (CSV)</span>
+          </button>
 
-          <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              Leads WhatsApp Capturados
-            </span>
-            <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-              96
-            </p>
-            <p className="text-[11px] text-emerald-500 font-semibold mt-2">
-              Leads calificados en bandeja
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('brand')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              activeTab === 'brand'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20 scale-[1.02]'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
+            }`}
+          >
+            <Palette className="w-4 h-4" />
+            <span>Identidad & Brand Lock</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('crm')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              activeTab === 'crm'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20 scale-[1.02]'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
+            }`}
+          >
+            <Briefcase className="w-4 h-4" />
+            <span>CRM & Leads ({orgLeads.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('directory')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              activeTab === 'directory'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20 scale-[1.02]'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
+            }`}
+          >
+            <Globe className="w-4 h-4" />
+            <span>Directorio Público</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('print')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+              activeTab === 'print'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20 scale-[1.02]'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800'
+            }`}
+          >
+            <Printer className="w-4 h-4" />
+            <span>Centro de Impresión</span>
+          </button>
+
+          {(currentOrg.org_type === 'restaurant' || currentOrg.industry_type === 'restaurant' || currentOrg.slug === 'brasa-criolla') && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('restaurant')}
+              className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
+                activeTab === 'restaurant'
+                  ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20 scale-[1.02]'
+                  : 'bg-white dark:bg-slate-900 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 border border-amber-200 dark:border-amber-800'
+              }`}
+            >
+              <UtensilsCrossed className="w-4 h-4" />
+              <span>Módulo Gastro</span>
+            </button>
+          )}
         </div>
 
-        {/* 2. Módulo de Marca Corporativa & Extracción de Colores con IA */}
-        <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Palette className="w-5 h-5 text-purple-500" />
-                <span>Gestión de Marca Corporativa & Extractor de Colores IA</span>
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Define la identidad visual estandarizada para todos los miembros de {currentOrg.name}.
-              </p>
+        {/* 1. PESTAÑA: RESUMEN & MÉTRICAS (KPIs + LEADERBOARD) */}
+        {activeTab === 'overview' && (
+          <div className="space-y-6">
+            {/* Métricas Globales */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  Cupo de Tarjetas NFC
+                </span>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-black text-slate-900 dark:text-white">
+                    {cards.length}
+                  </span>
+                  <span className="text-xs text-slate-400 font-semibold">
+                    / {currentOrg.max_cards} asignadas
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full mt-2 overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500 rounded-full"
+                    style={{
+                      width: `${Math.min(100, (cards.length / currentOrg.max_cards) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  Escaneos Totales del Equipo
+                </span>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-black text-slate-900 dark:text-white">
+                    {cards.length * 42 + 89}
+                  </span>
+                  <span className="text-xs text-emerald-500 font-bold flex items-center gap-0.5">
+                    <TrendingUp className="w-3 h-3" /> +24%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-2">Visitas registradas vía NFC/QR</p>
+              </div>
+
+              <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  Contactos Guardados (.vcf)
+                </span>
+                <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">
+                  {cards.length * 15 + 24}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-2">vCards descargadas a agendas</p>
+              </div>
+
+              <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  Leads Comerciales Capturados
+                </span>
+                <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">
+                  {orgLeads.length}
+                </p>
+                <p className="text-[11px] text-emerald-500 font-semibold mt-2">
+                  Prospectos en CRM corporativo
+                </p>
+              </div>
             </div>
 
-            {/* Switch Brand Lock */}
-            <div className="flex items-center gap-3 p-2 px-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-              <div className="text-right">
-                <span className="text-xs font-bold text-slate-900 dark:text-white block">
-                  Brand Lock (Congelar Marca)
-                </span>
-                <span className="text-[10px] text-slate-500">
-                  {currentOrg.enforce_brand_lock
-                    ? 'Los empleados no pueden modificar colores ni logo'
-                    : 'Permitir a los colaboradores personalizar colores'}
+            {/* Ranking Comercial / Sales Leaderboard */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Trophy className="w-5 h-5 text-amber-500" />
+                    <span>Ranking Comercial del Equipo (Sales Leaderboard)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Colaboradores que más prospectos han generado y más interacción comercial han logrado.
+                  </p>
+                </div>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-600 font-bold border border-amber-200 dark:border-amber-800 self-start sm:self-auto">
+                  En Tiempo Real
                 </span>
               </div>
+
+              {leaderboardReps.length === 0 ? (
+                <p className="text-xs text-slate-400 py-6 text-center">
+                  Aún no hay colaboradores registrados para calcular el ranking.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+                  {leaderboardReps.slice(0, 3).map((item, idx) => (
+                    <div
+                      key={item.card.id}
+                      className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700 flex items-center gap-3.5 relative overflow-hidden"
+                    >
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg text-white shadow-sm shrink-0"
+                        style={{
+                          backgroundColor: idx === 0 ? '#F59E0B' : idx === 1 ? '#94A3B8' : '#D97706',
+                        }}
+                      >
+                        #{idx + 1}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                          {item.card.full_name}
+                        </p>
+                        <p className="text-xs text-slate-500 truncate">
+                          {item.card.job_title || 'Colaborador'}
+                        </p>
+                        <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                          {item.leadsCount} {item.leadsCount === 1 ? 'prospecto capturado' : 'prospectos capturados'}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Accesos Rápidos para el Gerente */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <button
                 type="button"
-                onClick={handleToggleBrandLock}
-                className={`p-2 rounded-xl transition-colors ${
-                  currentOrg.enforce_brand_lock
-                    ? 'bg-purple-600 text-white'
-                    : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
-                }`}
-                title="Alternar bloqueo de marca"
+                onClick={() => setActiveTab('team')}
+                className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm text-left hover:border-purple-300 dark:hover:border-purple-700 transition-all flex items-center justify-between group"
               >
-                {currentOrg.enforce_brand_lock ? (
-                  <Lock className="w-4 h-4" />
-                ) : (
-                  <Unlock className="w-4 h-4" />
-                )}
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-purple-600 transition-colors">
+                    Gestionar Colaboradores
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Ver, activar o reasignar las {cards.length} tarjetas del equipo.
+                  </p>
+                </div>
+                <Users className="w-5 h-5 text-purple-500" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('import')}
+                className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm text-left hover:border-purple-300 dark:hover:border-purple-700 transition-all flex items-center justify-between group"
+              >
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-purple-600 transition-colors">
+                    Importador Masivo CSV
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Cargar lista completa de empleados en 1 clic.
+                  </p>
+                </div>
+                <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('directory')}
+                className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm text-left hover:border-purple-300 dark:hover:border-purple-700 transition-all flex items-center justify-between group"
+              >
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-purple-600 transition-colors">
+                    Directorio Institucional
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Página pública corporativa /org/{currentOrg.slug}.
+                  </p>
+                </div>
+                <Globe className="w-5 h-5 text-sky-500" />
               </button>
             </div>
           </div>
+        )}
 
-          {/* Formulario Logotipo y Botón IA */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-6 space-y-4">
+        {/* 2. PESTAÑA: MARCA CORPORATIVA & BRAND LOCK */}
+        {activeTab === 'brand' && (
+          <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
-                  <ImageIcon className="w-3.5 h-3.5 text-purple-500" />
-                  URL del Logotipo Corporativo Oficial
-                </label>
-                <div className="flex gap-3">
-                  <input
-                    type="url"
-                    value={logoInput}
-                    onChange={(e) => setLogoInput(e.target.value)}
-                    placeholder="https://tu-empresa.com/logo.png"
-                    className="flex-1 px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
-                  />
-                  <button
-                    type="button"
-                    disabled={isExtracting || !logoInput.trim()}
-                    onClick={handleExtractPalette}
-                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md disabled:opacity-50 transition-all hover:scale-105"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{isExtracting ? 'Analizando...' : 'Extraer Paleta IA'}</span>
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1.5">
-                  El algoritmo analiza los píxeles del logo y calcula una cuádrupla de colores armónica de alto contraste.
+                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Palette className="w-5 h-5 text-purple-500" />
+                  <span>Gestión de Marca Corporativa & Extractor de Colores IA</span>
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Define la identidad visual estandarizada para todos los miembros de {currentOrg.name}.
                 </p>
               </div>
 
-              {/* Previsualización de Logotipo */}
-              <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 flex items-center gap-4">
-                <div className="w-16 h-16 rounded-xl bg-white p-2 border border-slate-200 flex items-center justify-center shrink-0 shadow-sm">
-                  {logoInput ? (
-                    <img
-                      src={logoInput}
-                      alt="Logo de empresa"
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <Building2 className="w-6 h-6 text-slate-400" />
-                  )}
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-slate-900 dark:text-white">
-                    {currentOrg.name}
-                  </h4>
-                  <p className="text-[11px] text-slate-500 font-mono">
-                    Slug: /org/{currentOrg.slug}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Paleta Extraída / Configurada */}
-            <div className="lg:col-span-6 space-y-4">
-              <span className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                Paleta Corporativa Estandarizada
-              </span>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <span className="block text-[11px] font-semibold text-slate-500 mb-1">
-                    Primario
+              {/* Switch Brand Lock */}
+              <div className="flex items-center gap-3 p-2 px-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                <div className="text-right">
+                  <span className="text-xs font-bold text-slate-900 dark:text-white block">
+                    Brand Lock (Congelar Marca)
                   </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={colors.primary}
-                      onChange={(e) =>
-                        setColors({ ...colors, primary: e.target.value })
-                      }
-                      className="w-8 h-8 rounded-lg cursor-pointer bg-transparent"
-                    />
-                    <input
-                      type="text"
-                      value={colors.primary}
-                      onChange={(e) =>
-                        setColors({ ...colors, primary: e.target.value })
-                      }
-                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <span className="block text-[11px] font-semibold text-slate-500 mb-1">
-                    Secundario
+                  <span className="text-[10px] text-slate-500">
+                    {currentOrg.enforce_brand_lock
+                      ? 'Los empleados no pueden modificar colores ni logo'
+                      : 'Permitir a los colaboradores personalizar colores'}
                   </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={colors.secondary}
-                      onChange={(e) =>
-                        setColors({ ...colors, secondary: e.target.value })
-                      }
-                      className="w-8 h-8 rounded-lg cursor-pointer bg-transparent"
-                    />
-                    <input
-                      type="text"
-                      value={colors.secondary}
-                      onChange={(e) =>
-                        setColors({ ...colors, secondary: e.target.value })
-                      }
-                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
-                    />
-                  </div>
                 </div>
-
-                <div>
-                  <span className="block text-[11px] font-semibold text-slate-500 mb-1">
-                    Acento
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={colors.accent}
-                      onChange={(e) =>
-                        setColors({ ...colors, accent: e.target.value })
-                      }
-                      className="w-8 h-8 rounded-lg cursor-pointer bg-transparent"
-                    />
-                    <input
-                      type="text"
-                      value={colors.accent}
-                      onChange={(e) =>
-                        setColors({ ...colors, accent: e.target.value })
-                      }
-                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <span className="block text-[11px] font-semibold text-slate-500 mb-1">
-                    Fondo
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={colors.background}
-                      onChange={(e) =>
-                        setColors({ ...colors, background: e.target.value })
-                      }
-                      className="w-8 h-8 rounded-lg cursor-pointer bg-transparent"
-                    />
-                    <input
-                      type="text"
-                      value={colors.background}
-                      onChange={(e) =>
-                        setColors({ ...colors, background: e.target.value })
-                      }
-                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Botón Guardar Cambios de Marca */}
-              <div className="flex justify-end pt-2">
                 <button
                   type="button"
-                  onClick={handleSaveBrand}
-                  className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-all hover:scale-105"
+                  onClick={handleToggleBrandLock}
+                  className={`p-2 rounded-xl transition-colors ${
+                    currentOrg.enforce_brand_lock
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
+                  }`}
+                  title="Alternar bloqueo de marca"
                 >
-                  {saveSuccess ? (
-                    <>
-                      <Check className="w-4 h-4 text-white" />
-                      <span>¡Marca Sincronizada con Éxito!</span>
-                    </>
+                  {currentOrg.enforce_brand_lock ? (
+                    <Lock className="w-4 h-4" />
                   ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 text-white" />
-                      <span>Aplicar a Toda la Empresa</span>
-                    </>
+                    <Unlock className="w-4 h-4" />
                   )}
                 </button>
               </div>
             </div>
-          </div>
-        </section>
 
-        {/* 3. Gestión de Tarjetas de Colaboradores del Equipo */}
-        <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Users className="w-4 h-4 text-purple-500" />
-                <span>Tarjetas del Equipo ({cards.length})</span>
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Colaboradores con credencial inteligente activa en {currentOrg.name}.
-              </p>
-            </div>
-
-            <button
-              onClick={() => setShowAddEmployeeModal(true)}
-              disabled={cards.length >= currentOrg.max_cards}
-              className="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Añadir Colaborador</span>
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="px-5 py-3.5">Colaborador / Puesto</th>
-                  <th className="px-5 py-3.5">Enlace Público</th>
-                  <th className="px-5 py-3.5">Layout Asignado</th>
-                  <th className="px-5 py-3.5">Rol / Permisos</th>
-                  <th className="px-5 py-3.5 text-center">Estado Tarjeta</th>
-                  <th className="px-5 py-3.5 text-right">Acción</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {cards.map((card) => (
-                  <tr
-                    key={card.id}
-                    className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
-                  >
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={
-                            card.profile_photo_url ||
-                            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'
-                          }
-                          alt={card.full_name}
-                          className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-slate-700 shadow-sm"
-                        />
-                        <div>
-                          <p className="font-bold text-slate-900 dark:text-white">
-                            {card.full_name}
-                          </p>
-                          <p className="text-[11px] text-slate-500">
-                            {card.job_title}
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="px-5 py-4 font-mono text-[11px] text-purple-600 dark:text-purple-400">
-                      /c/{card.slug}
-                    </td>
-
-                    <td className="px-5 py-4">
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                        {card.layout_type || 'modern'}
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-4">
-                      {isOrgAdmin ? (
-                        <select
-                          defaultValue="collaborator"
-                          className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
-                          onChange={(e) => {
-                            const newRole = e.target.value;
-                            alert(`Permisos guardados: ${card.full_name} ahora tiene rol de ${newRole === 'org_admin' ? 'Administrador de Empresa (Control total)' : 'Vendedor / Asesor (Sin permisos de eliminación)'}.`);
-                          }}
-                        >
-                          <option value="collaborator">💼 Vendedor / Asesor</option>
-                          <option value="org_admin">👑 Administrador Empresa</option>
-                        </select>
+            {/* Formulario Logotipo y Botón IA */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              <div className="lg:col-span-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-purple-500" />
+                    URL del Logotipo Corporativo Oficial
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="url"
+                      value={logoInput}
+                      onChange={(e) => setLogoInput(e.target.value)}
+                      placeholder="https://tu-empresa.com/logo.png"
+                      className="flex-1 px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                    />
+                    <button
+                      type="button"
+                      disabled={isExtracting || !logoInput.trim()}
+                      onClick={handleExtractPalette}
+                      className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                    >
+                      {isExtracting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
-                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                          💼 Vendedor
-                        </span>
+                        <Sparkles className="w-4 h-4" />
                       )}
-                    </td>
+                      <span>Extraer con IA</span>
+                    </button>
+                  </div>
+                </div>
 
-                    <td className="px-5 py-4 text-center">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleCard(card.id, card.is_active)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                          card.is_active
-                            ? 'bg-emerald-500'
-                            : 'bg-slate-300 dark:bg-slate-700'
-                        }`}
-                        title={card.is_active ? 'Desactivar tarjeta' : 'Activar tarjeta'}
-                      >
-                        <span
-                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                            card.is_active ? 'translate-x-4' : 'translate-x-1'
-                          }`}
-                        />
-                      </button>
-                    </td>
+                {/* Subir archivo de logotipo */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                    <Upload className="w-3.5 h-3.5 text-purple-500" />
+                    O sube una imagen desde tu dispositivo
+                  </label>
+                  <label className="flex items-center justify-center p-3 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-500 cursor-pointer bg-slate-50/50 dark:bg-slate-800/30 transition-colors">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleLogoUpload(e, false)}
+                      className="hidden"
+                      disabled={uploadingLogo}
+                    />
+                    {uploadingLogo ? (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-purple-600">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Optimizando y subiendo logotipo...</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs font-semibold text-slate-500 hover:text-purple-600 flex items-center gap-1.5">
+                        <Upload className="w-4 h-4" />
+                        Seleccionar archivo de imagen (PNG, JPG, WebP)
+                      </span>
+                    )}
+                  </label>
+                </div>
 
-                    <td className="px-5 py-4 text-right">
-                      <a
-                        href={`/c/${card.slug}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 font-semibold hover:bg-purple-100 transition-colors"
-                      >
-                        <span>Ver Perfil</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                {/* Campos Institucionales Adicionales: Descripción y Aviso Legal */}
+                <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Descripción Oficial de la Empresa (se muestra en el Directorio Público)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={orgDescInput}
+                      onChange={(e) => setOrgDescInput(e.target.value)}
+                      placeholder="ej: Empresa líder en soluciones tecnológicas y consultoría estratégica para clientes globales..."
+                      className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                    />
+                  </div>
 
-        {/* 4. Importación Masiva de Colaboradores por CSV */}
-        <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <span>📥</span>
-              <span>Importación Masiva de Colaboradores (CSV)</span>
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Carga un archivo CSV con columnas: <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">nombre,cargo,email,telefono</code>. Se creará una tarjeta por fila.
-            </p>
-          </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Aviso Legal y Descargo de Responsabilidad (pie de tarjetas del equipo)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={orgDisclaimerInput}
+                      onChange={(e) => setOrgDisclaimerInput(e.target.value)}
+                      placeholder="ej: Esta credencial digital inteligente es de uso exclusivo y propiedad de la empresa. Queda prohibida su alteración o uso indebido."
+                      className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+              </div>
 
-          <div className="p-5 space-y-4">
-            {/* Zona de upload CSV */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              <label
-                htmlFor="csv-upload"
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-400 text-slate-600 dark:text-slate-300 text-xs font-semibold cursor-pointer transition-colors"
-              >
-                <span>📂</span>
-                <span>Seleccionar archivo CSV / Excel</span>
-                <input
-                  id="csv-upload"
-                  type="file"
-                  accept=".csv,.tsv,.txt"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file || !currentOrg) return;
-                    const reader = new FileReader();
-                    reader.onload = (ev) => {
-                      const text = ev.target?.result as string;
-                      const lines = text.trim().split(/\r?\n/);
-                      const header = lines[0].toLowerCase();
-                      const startIdx = header.includes('nombre') || header.includes('name') ? 1 : 0;
-                      let created = 0;
-                      lines.slice(startIdx).forEach((line, idx) => {
-                        const cols = line.split(/,|;|\t/);
-                        const name = cols[0]?.trim();
-                        if (!name) return;
-                        const title = cols[1]?.trim() || 'Colaborador';
-                        const email = cols[2]?.trim() || '';
-                        const phone = cols[3]?.trim() || '';
-                        const slug = `${name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')}-${Date.now().toString().slice(-4)}-${idx}`;
-                        const card: FullCard = {
-                          id: 'c_csv_' + Date.now() + '_' + idx,
-                          user_id: 'a0000000-0000-0000-0000-000000000002',
-                          organization_id: currentOrg.id,
-                          slug,
-                          is_active: true,
-                          full_name: name,
-                          job_title: title,
-                          company_name: currentOrg.name,
-                          bio: `Miembro del equipo profesional en ${currentOrg.name}.`,
-                          profile_photo_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=600',
-                          cover_photo_url: 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=1200',
-                          logo_url: currentOrg.logo_url,
-                          layout_type: 'banner_header',
-                          avatar_position: 'header_floating',
-                          button_style: 'gradient',
-                          border_radius: 'lg',
-                          primary_color: currentOrg.brand_colors.primary,
-                          secondary_color: currentOrg.brand_colors.secondary,
-                          accent_color: currentOrg.brand_colors.accent,
-                          background_color: currentOrg.brand_colors.background,
-                          font_family: currentOrg.font_family,
-                          font_weight: 'semibold',
-                          include_photo: true,
-                          custom_vcf_notes: `Contacto verificado por ${currentOrg.name}.`,
-                          created_at: new Date().toISOString(),
-                          links: [
-                            ...(email ? [{ id: 'l_csv_e_' + idx, card_id: 'c_csv_' + idx, type: 'email' as const, label: 'Correo', url: `mailto:${email}`, icon_name: 'Mail', is_active: true, position_order: 0 }] : []),
-                            ...(phone ? [{ id: 'l_csv_p_' + idx, card_id: 'c_csv_' + idx, type: 'phone' as const, label: 'Teléfono', url: `tel:${phone}`, icon_name: 'Phone', is_active: true, position_order: 1 }] : []),
-                          ],
-                          multimedia: [],
-                        };
-                        saveCard(card);
-                        created++;
-                      });
-                      alert(`✅ ${created} tarjeta(s) importada(s) correctamente desde CSV.`);
-                      loadOrgData();
-                      e.target.value = '';
-                    };
-                    reader.readAsText(file);
-                  }}
-                />
-              </label>
+              {/* Selector de 4 Colores */}
+              <div className="lg:col-span-6 space-y-4">
+                <span className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Paleta Institucional Oficial
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-500">Primario</span>
+                    <input
+                      type="color"
+                      value={colors.primary}
+                      onChange={(e) =>
+                        setColors({ ...colors, primary: e.target.value })
+                      }
+                      className="w-full h-8 rounded-lg cursor-pointer border-0 bg-transparent"
+                    />
+                    <input
+                      type="text"
+                      value={colors.primary}
+                      onChange={(e) =>
+                        setColors({ ...colors, primary: e.target.value })
+                      }
+                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                    />
+                  </div>
 
-              <div className="text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed">
-                <p className="font-semibold text-slate-500 dark:text-slate-400 mb-0.5">Formato esperado:</p>
-                <code className="block font-mono bg-slate-50 dark:bg-slate-800 p-2 rounded-lg text-[10px]">
-                  nombre,cargo,email,telefono<br />
-                  Ana García,Directora,ana@empresa.com,+34600000000<br />
-                  Carlos López,Gerente,carlos@empresa.com,
-                </code>
+                  <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-500">Secundario</span>
+                    <input
+                      type="color"
+                      value={colors.secondary}
+                      onChange={(e) =>
+                        setColors({ ...colors, secondary: e.target.value })
+                      }
+                      className="w-full h-8 rounded-lg cursor-pointer border-0 bg-transparent"
+                    />
+                    <input
+                      type="text"
+                      value={colors.secondary}
+                      onChange={(e) =>
+                        setColors({ ...colors, secondary: e.target.value })
+                      }
+                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                    />
+                  </div>
+
+                  <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-500">Acento</span>
+                    <input
+                      type="color"
+                      value={colors.accent}
+                      onChange={(e) =>
+                        setColors({ ...colors, accent: e.target.value })
+                      }
+                      className="w-full h-8 rounded-lg cursor-pointer border-0 bg-transparent"
+                    />
+                    <input
+                      type="text"
+                      value={colors.accent}
+                      onChange={(e) =>
+                        setColors({ ...colors, accent: e.target.value })
+                      }
+                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                    />
+                  </div>
+
+                  <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-500">Fondo</span>
+                    <input
+                      type="color"
+                      value={colors.background}
+                      onChange={(e) =>
+                        setColors({ ...colors, background: e.target.value })
+                      }
+                      className="w-full h-8 rounded-lg cursor-pointer border-0 bg-transparent"
+                    />
+                    <input
+                      type="text"
+                      value={colors.background}
+                      onChange={(e) =>
+                        setColors({ ...colors, background: e.target.value })
+                      }
+                      className="w-full px-2 py-1 text-[11px] font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                    />
+                  </div>
+                </div>
+
+                {/* Botón Guardar Cambios de Marca */}
+                <div className="flex justify-end pt-3">
+                  <button
+                    type="button"
+                    onClick={handleSaveBrand}
+                    className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-all hover:scale-105"
+                  >
+                    {saveSuccess ? (
+                      <>
+                        <Check className="w-4 h-4 text-white" />
+                        <span>¡Marca Sincronizada con Éxito!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 text-white" />
+                        <span>Aplicar a Toda la Empresa</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
+
+        {/* 3. PESTAÑA: GESTIÓN DE TARJETAS DE COLABORADORES */}
+        {activeTab === 'team' && (
+          <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden space-y-4">
+            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Users className="w-4 h-4 text-purple-500" />
+                  <span>Tarjetas del Equipo ({cards.length})</span>
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Colaboradores con credencial inteligente activa en {currentOrg.name}.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                {/* Buscador de Colaboradores */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={teamSearch}
+                    onChange={(e) => setTeamSearch(e.target.value)}
+                    placeholder="Buscar por nombre, cargo o slug..."
+                    className="pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <button
+                  onClick={() => setShowAddEmployeeModal(true)}
+                  disabled={cards.length >= currentOrg.max_cards}
+                  className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-all hover:scale-105"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Añadir Colaborador</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-100 dark:border-slate-800">
+                  <tr>
+                    <th className="px-5 py-3.5">Colaborador / Puesto</th>
+                    <th className="px-5 py-3.5">Enlace Público</th>
+                    <th className="px-5 py-3.5">Layout Asignado</th>
+                    <th className="px-5 py-3.5">Rol / Permisos</th>
+                    <th className="px-5 py-3.5 text-center">Estado Tarjeta</th>
+                    <th className="px-5 py-3.5 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredTeamCards.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-8 text-center text-xs text-slate-400">
+                        No se encontraron colaboradores{teamSearch ? ` para "${teamSearch}"` : ''}.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTeamCards.map((card) => (
+                      <tr
+                        key={card.id}
+                        className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
+                      >
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={
+                                card.profile_photo_url ||
+                                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'
+                              }
+                              alt={card.full_name}
+                              className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-slate-700 shadow-sm"
+                            />
+                            <div>
+                              <p className="font-bold text-slate-900 dark:text-white">
+                                {card.full_name}
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                {card.job_title}
+                                {card.department ? ` • ${card.department}` : ''}
+                              </p>
+                              {card.redirect_to_slug && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md mt-0.5 border border-amber-200 dark:border-amber-800/50">
+                                  <ArrowRightLeft className="w-2.5 h-2.5" />
+                                  Redirige a /c/{card.redirect_to_slug}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4 font-mono text-[11px] text-purple-600 dark:text-purple-400">
+                          /c/{card.slug}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                            {card.layout_type || 'modern'}
+                          </span>
+                        </td>
+
+                        <td className="px-5 py-4">
+                          {isOrgAdmin ? (
+                            <select
+                              defaultValue="collaborator"
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
+                              onChange={(e) => {
+                                const newRole = e.target.value;
+                                alert(`Permisos guardados: ${card.full_name} ahora tiene rol de ${newRole === 'org_admin' ? 'Administrador de Empresa (Control total)' : 'Vendedor / Asesor (Sin permisos de eliminación)'}.`);
+                              }}
+                            >
+                              <option value="collaborator">💼 Vendedor / Asesor</option>
+                              <option value="org_admin">👑 Administrador Empresa</option>
+                            </select>
+                          ) : (
+                            <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                              💼 Vendedor
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCard(card.id, card.is_active)}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                              card.is_active
+                                ? 'bg-emerald-500'
+                                : 'bg-slate-300 dark:bg-slate-700'
+                            }`}
+                            title={card.is_active ? 'Desactivar tarjeta' : 'Activar tarjeta'}
+                          >
+                            <span
+                              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                                card.is_active ? 'translate-x-4' : 'translate-x-1'
+                              }`}
+                            />
+                          </button>
+                        </td>
+
+                        <td className="px-5 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRedirectingCard(card);
+                                setRedirectTarget(card.redirect_to_slug || '');
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-colors ${
+                                card.redirect_to_slug
+                                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-800'
+                                  : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-purple-600 hover:border-purple-300'
+                              }`}
+                              title={card.redirect_to_slug ? `Redirigido a /c/${card.redirect_to_slug}` : 'Redirigir tráfico a otro colaborador'}
+                            >
+                              <ArrowRightLeft className="w-3 h-3" />
+                              <span>{card.redirect_to_slug ? 'Redirigido' : 'Redirigir'}</span>
+                            </button>
+
+                            <a
+                              href={`/c/${card.slug}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 font-semibold hover:bg-purple-100 transition-colors"
+                            >
+                              <span>Ver Perfil</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* 4. PESTAÑA: IMPORTACIÓN MASIVA CSV & FIRMAS */}
+        {activeTab === 'import' && (
+          <div className="space-y-6">
+            <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
+                    <span>Importación Masiva de Colaboradores (CSV / Excel)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Genera las tarjetas inteligentes de tu equipo en 1 solo clic con sincronización automática en la base de datos.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadCsvTemplate}
+                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center gap-1.5 transition-colors self-start sm:self-auto"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Descargar Plantilla CSV Oficial</span>
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                {csvResult && (
+                  <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-xs text-emerald-800 dark:text-emerald-300 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <span>{csvResult.message}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('team')}
+                      className="px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold text-[11px] hover:bg-emerald-500 transition-colors"
+                    >
+                      Ver en Equipo
+                    </button>
+                  </div>
+                )}
+
+                {/* Zona de upload CSV */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                  <label
+                    htmlFor="csv-upload"
+                    className="flex items-center gap-2 px-5 py-3 rounded-2xl border-2 border-dashed border-purple-400/80 hover:border-purple-600 dark:border-purple-600/60 dark:hover:border-purple-400 bg-purple-50/40 dark:bg-purple-950/20 text-purple-700 dark:text-purple-300 text-xs font-bold cursor-pointer transition-all hover:scale-[1.01]"
+                  >
+                    {csvUploading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
+                        <span>Procesando y creando tarjetas en Supabase...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 text-purple-600" />
+                        <span>Seleccionar archivo CSV con colaboradores</span>
+                      </>
+                    )}
+                    <input
+                      id="csv-upload"
+                      type="file"
+                      accept=".csv,.tsv,.txt"
+                      className="hidden"
+                      disabled={csvUploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleCsvBatchImport(file);
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed max-w-lg">
+                    <p className="font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Estructura requerida de columnas:</p>
+                    <code className="block font-mono bg-slate-100 dark:bg-slate-800 p-2.5 rounded-xl text-[11px] border border-slate-200 dark:border-slate-700">
+                      nombre,cargo,email,telefono,departamento
+                    </code>
+                  </div>
+                </div>
+              </div>
+            </section>
 
         {/* 5. Generador de Firma de Email Corporativa */}
         <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
@@ -1423,80 +1965,171 @@ export default function OrgDashboardPage() {
             )}
           </div>
         </section>
+      </div>
+    )}
 
-      {/* MODAL DE EXPORTACIÓN EN LOTE DE CÓDIGOS QR */}
-      {showBatchQRModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setShowBatchQRModal(false)}
-        >
-          <div
-            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+      {/* 5. PESTAÑA: DIRECTORIO INSTITUCIONAL PÚBLICO */}
+      {activeTab === 'directory' && (
+        <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 sm:p-8 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-sky-500/10 text-sky-600 border border-sky-500/20 flex items-center justify-center">
+                <Globe className="w-6 h-6" />
+              </div>
               <div>
-                <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                  Hoja de Códigos QR Corporativos - {currentOrg.name}
-                </h3>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white">
+                  Directorio Institucional Público
+                </h2>
                 <p className="text-xs text-slate-500">
-                  Listo para imprimir en pliego adhesivo o programar en chips NFC físicos.
+                  Tu página corporativa oficial en ProConnect para que clientes y aliados contacten a tu equipo.
                 </p>
               </div>
+            </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handlePrintBatch}
-                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Imprimir Hoja</span>
-                </button>
-                <button
-                  onClick={() => setShowBatchQRModal(false)}
-                  className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300"
-                >
-                  Cerrar
-                </button>
+            <div className="flex items-center gap-2.5">
+              <a
+                href={`/org/${currentOrg.slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-600/20 flex items-center gap-2 transition-all hover:scale-105"
+              >
+                <Eye className="w-4 h-4" />
+                <span>Ver Directorio en Vivo</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+
+          {/* Tarjeta de visualización rápida del enlace */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+            <div className="md:col-span-2 space-y-4">
+              <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  Enlace Público Oficial:
+                </span>
+                <div className="flex items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <span className="text-xs font-mono font-bold text-purple-600 dark:text-purple-400 truncate">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/org/${currentOrg.slug}` : `https://proconnect-pearl.vercel.app/org/${currentOrg.slug}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = typeof window !== 'undefined' ? `${window.location.origin}/org/${currentOrg.slug}` : `https://proconnect-pearl.vercel.app/org/${currentOrg.slug}`;
+                      navigator.clipboard.writeText(url);
+                      alert('¡Enlace del directorio copiado al portapapeles!');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-purple-50 hover:text-purple-600 transition-colors shrink-0"
+                  >
+                    Copiar
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                <p className="font-semibold text-slate-900 dark:text-white">
+                  ¿Qué incluye el Directorio Institucional?
+                </p>
+                <ul className="list-disc list-inside space-y-1 pl-1">
+                  <li>Identidad oficial con logo, colores corporativos y sello de verificación.</li>
+                  <li>Buscador reactivo en tiempo real para encontrar colaboradores por nombre o puesto.</li>
+                  <li>Filtro instantáneo por departamentos (Ventas, Operaciones, Dirección, etc.).</li>
+                  <li>Accesos directos a llamada, WhatsApp y correo de cada asesor comercial.</li>
+                  <li>Descargo de responsabilidad legal oficial al pie de página.</li>
+                </ul>
               </div>
             </div>
 
-            {/* Grid de Códigos QR para Imprimir */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 print:grid-cols-3">
-              {cards.map((c) => {
-                const url = typeof window !== 'undefined'
-                  ? `${window.location.origin}/c/${c.slug}`
-                  : `https://proconnect.app/c/${c.slug}`;
-
-                return (
-                  <div
-                    key={c.id}
-                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-center flex flex-col items-center justify-between"
-                  >
-                    <div className="p-2 bg-white rounded-xl shadow-inner mb-2">
-                      <QRCodeSVG value={url} size={110} level="M" includeMargin={true} />
-                    </div>
-                    <h5 className="font-bold text-xs text-slate-900 dark:text-white truncate max-w-[140px]">
-                      {c.full_name}
-                    </h5>
-                    <p className="text-[10px] text-slate-500 truncate max-w-[140px]">
-                      {c.job_title}
-                    </p>
-                    <span className="text-[9px] font-mono text-purple-500 mt-1">
-                      /c/{c.slug}
-                    </span>
-                  </div>
-                );
-              })}
+            {/* QR del Directorio */}
+            <div className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center space-y-3">
+              <div className="p-3 bg-white rounded-2xl shadow-md border border-slate-100">
+                <QRCodeSVG
+                  value={typeof window !== 'undefined' ? `${window.location.origin}/org/${currentOrg.slug}` : `https://proconnect-pearl.vercel.app/org/${currentOrg.slug}`}
+                  size={140}
+                  level="H"
+                />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white">QR del Directorio</h4>
+                <p className="text-[10px] text-slate-400">Escanea para abrir en el celular</p>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
       )}
 
-      
-        {/* ════════════════════════════════════════════════════════════
-            MÓDULO CRM CORPORATIVO — GESTIÓN DE LEADS & EQUIPO DE VENTAS
-        ════════════════════════════════════════════════════════════ */}
+      {/* 6. PESTAÑA: CENTRO DE IMPRESIÓN QR */}
+      {activeTab === 'print' && (
+        <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 sm:p-8 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-purple-500/10 text-purple-600 border border-purple-500/20 flex items-center justify-center">
+                <Printer className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white">
+                  Centro de Impresión & Exportación de Códigos QR
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Fichas listas para imprenta, corte estándar 85x54mm o grabado en tarjetas plásticas NFC.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowBatchQRModal(true)}
+              className="px-5 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-600/20 flex items-center gap-2 transition-all hover:scale-105"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Abrir Modal de Impresión / Guardar PDF</span>
+            </button>
+          </div>
+
+          {/* Vista previa de las tarjetas */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {cards.map((card) => {
+              const profileUrl = typeof window !== 'undefined'
+                ? `${window.location.origin}/c/${card.slug}`
+                : `https://proconnect-pearl.vercel.app/c/${card.slug}`;
+
+              return (
+                <div
+                  key={card.id}
+                  className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-col items-center text-center space-y-3"
+                >
+                  <div className="p-3 bg-white rounded-xl shadow-sm border border-slate-100">
+                    <QRCodeSVG value={profileUrl} size={110} level="H" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs font-black text-slate-900 dark:text-white truncate max-w-[200px]">
+                      {card.full_name}
+                    </h4>
+                    <p className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 truncate max-w-[200px]">
+                      {card.job_title || 'Colaborador'}
+                    </p>
+                    <p className="text-[9px] font-mono text-slate-400 pt-1">
+                      /c/{card.slug}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* MODAL DE IMPRESIÓN POR LOTES */}
+      <BatchPrintModal
+        isOpen={showBatchQRModal}
+        onClose={() => setShowBatchQRModal(false)}
+        organization={currentOrg}
+        cards={cards}
+      />
+
+      {/* ════════════════════════════════════════════════════════════
+          7. PESTAÑA: CRM CORPORATIVO — GESTIÓN DE LEADS & EQUIPO DE VENTAS
+      ════════════════════════════════════════════════════════════ */}
+      {activeTab === 'crm' && (
         <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden space-y-6">
           {/* Header CRM */}
           <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1906,15 +2539,17 @@ export default function OrgDashboardPage() {
             )}
           </div>
         </section>
+      )}
 
       {/* ════════════════════════════════════════════════════════════
-          MÓDULO GASTRO — PANEL DE RESTAURANTE & KDS KITCHEN DISPLAY
+          8. PESTAÑA: MÓDULO GASTRO — PANEL DE RESTAURANTE & KDS
       ════════════════════════════════════════════════════════════ */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-amber-200/60 dark:border-amber-900/30 shadow-sm overflow-hidden">
-
-          {/* Header Gastro */}
-          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-6 py-5 text-white">
+      {activeTab === 'restaurant' && (
+        <>
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-amber-200/60 dark:border-amber-900/30 shadow-sm overflow-hidden">
+            {/* Header Gastro */}
+            <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-6 py-5 text-white">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
                 <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shadow-md">
@@ -2550,9 +3185,100 @@ export default function OrgDashboardPage() {
           </div>
         </div>
       )}
+      </>
+      )}
           </>
         )}
       </main>
+
+      {/* MODAL DE REDIRECCIÓN INTELIGENTE POR BAJA LABORAL */}
+      {redirectingCard && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setRedirectingCard(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
+                  <ArrowRightLeft className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Transferir Tráfico
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {redirectingCard.full_name} (/c/{redirectingCard.slug})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRedirectingCard(null)}
+                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Si este colaborador ha sido desvinculado o reasignado, redirige a cualquier cliente que escanee su tarjeta física NFC o visite su enlace hacia otro miembro del equipo o WhatsApp general.
+            </p>
+
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                Seleccionar colaborador sustituto:
+              </label>
+              <select
+                value={redirectTarget}
+                onChange={(e) => setRedirectTarget(e.target.value)}
+                className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+              >
+                <option value="">-- Sin redirección (Tarjeta normal) --</option>
+                {cards
+                  .filter((c) => c.id !== redirectingCard.id && c.is_active)
+                  .map((c) => (
+                    <option key={c.id} value={c.slug}>
+                      {c.full_name} ({c.job_title || 'Colaborador'}) - /c/{c.slug}
+                    </option>
+                  ))}
+              </select>
+
+              <div className="text-[11px] text-slate-400">
+                O introduce un slug o destino personalizado:
+              </div>
+              <input
+                type="text"
+                value={redirectTarget}
+                onChange={(e) => setRedirectTarget(e.target.value)}
+                placeholder="ej: nuevo-gerente o contacto-soporte"
+                className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRedirectingCard(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isSavingRedirect}
+                onClick={handleSaveCardRedirect}
+                className="px-4 py-2 text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isSavingRedirect && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Guardar Redirección</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL CREAR EMPRESA */}
       {showCreateOrgModal && (

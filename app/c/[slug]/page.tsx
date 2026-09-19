@@ -109,8 +109,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
+import { redirect } from 'next/navigation';
+
 export default async function PublicCardPage({ params }: PageProps) {
   const card = await getCardForServer(params.slug);
+
+  if (card?.redirect_to_slug && card.redirect_to_slug.toLowerCase() !== params.slug.toLowerCase()) {
+    redirect(`/c/${encodeURIComponent(card.redirect_to_slug)}`);
+  }
 
   return <PublicCardClient slug={params.slug} initialCard={card} />;
 }
